@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#111111">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Color Studio">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-180.png">
+<link rel="manifest" href="manifest.json">
+<title>Color Studio</title>
+<style>
+  :root {
+    --bg: #111; --panel: #1a1a1a; --line: #2a2a2a; --text: #eee; --sub: #888; --accent: #f2f2f2;
+    --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; overflow: hidden; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  #app { display: flex; flex-direction: column; height: 100%; max-width: 900px; margin: 0 auto; }
+
+  header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; padding-top: max(12px, env(safe-area-inset-top)); }
+  .logo { font-weight: 700; letter-spacing: .25em; font-size: 13px; }
+  .hbtn { font-size: 14px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); }
+  .hbtn.primary { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 600; }
+  .hbtn:disabled { opacity: .3; }
+
+  #stage { flex: 1; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; padding: 8px 16px; }
+  #view { max-width: 100%; max-height: 100%; display: none; touch-action: none; user-select: none; -webkit-user-select: none; }
+  #empty { text-align: center; color: var(--sub); line-height: 1.9; }
+  #empty .big { display: inline-block; margin-top: 14px; padding: 12px 26px; border-radius: 999px; background: var(--accent); color: #111; font-weight: 600; }
+  #origBadge { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.6); padding: 4px 12px; border-radius: 999px; font-size: 12px; display: none; }
+
+  #videoBar { display: none; align-items: center; gap: 10px; padding: 0 16px 6px; }
+  #playBtn { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--line); font-size: 12px; }
+  #seek { flex: 1; }
+  #timeLbl { font-size: 11px; color: var(--sub); min-width: 74px; text-align: right; font-variant-numeric: tabular-nums; }
+
+  #panel { background: var(--panel); border-top: 1px solid var(--line); padding-bottom: calc(8px + var(--safe-b)); }
+  .tabs { display: flex; justify-content: center; gap: 28px; padding: 10px 0 4px; }
+  .tab { font-size: 13px; color: var(--sub); padding: 4px 2px; border-bottom: 2px solid transparent; }
+  .tab.on { color: var(--text); border-color: var(--text); }
+
+  #presetPane { padding: 6px 0 4px; }
+  #strengthRow { display: flex; align-items: center; gap: 10px; padding: 4px 16px 8px; min-height: 34px; }
+  #strengthRow .lbl { font-size: 12px; color: var(--sub); white-space: nowrap; }
+  #strengthRow input { flex: 1; }
+  #strengthVal { font-size: 12px; min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+  #delPreset { font-size: 12px; color: #e66; display: none; }
+  #presets { display: flex; gap: 8px; overflow-x: auto; padding: 0 16px 8px; scrollbar-width: none; }
+  #presets::-webkit-scrollbar { display: none; }
+  .preset { flex: 0 0 auto; width: 72px; text-align: center; }
+  .preset canvas, .preset .ph { width: 72px; height: 72px; display: block; border-radius: 4px; object-fit: cover; background: #222; outline: 2px solid transparent; outline-offset: 2px; }
+  .preset.on canvas, .preset.on .ph { outline-color: var(--text); }
+  .preset .code { font-size: 11px; font-weight: 700; margin-top: 6px; letter-spacing: .05em; }
+  .preset .name { font-size: 10px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .preset.add .ph { display: flex; align-items: center; justify-content: center; font-size: 26px; color: var(--sub); border: 1px dashed #444; background: none; }
+
+  #adjustPane { display: none; max-height: 34vh; overflow-y: auto; padding: 6px 16px 8px; }
+  .adj { display: grid; grid-template-columns: 84px 1fr 38px; align-items: center; gap: 10px; padding: 7px 0; }
+  .adj label { font-size: 12px; color: #ccc; }
+  .adj .val { font-size: 12px; text-align: right; color: var(--sub); font-variant-numeric: tabular-nums; }
+  .adj.changed .val { color: var(--text); }
+  .adjFoot { display: flex; justify-content: space-between; padding-top: 6px; }
+  .adjFoot button { font-size: 12px; color: var(--sub); padding: 6px 0; }
+
+  input[type=range] { -webkit-appearance: none; appearance: none; height: 24px; background: transparent; }
+  input[type=range]::-webkit-slider-runnable-track { height: 2px; background: #444; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #fff; margin-top: -8px; }
+  input[type=range]::-moz-range-track { height: 2px; background: #444; }
+  input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #fff; border: 0; }
+
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none; align-items: center; justify-content: center; z-index: 10; padding: 24px; }
+  .modal.show { display: flex; }
+  .card { background: var(--panel); border-radius: 14px; padding: 20px; width: 100%; max-width: 380px; text-align: center; }
+  .card h3 { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
+  .card p { font-size: 12px; color: var(--sub); margin: 8px 0; line-height: 1.6; }
+  .card img, .card video { max-width: 100%; max-height: 40vh; border-radius: 6px; display: block; margin: 0 auto 12px; }
+  .card .row { display: flex; gap: 8px; margin-top: 12px; }
+  .card .row button { flex: 1; padding: 11px; border-radius: 10px; border: 1px solid var(--line); font-size: 14px; }
+  .card .row button.primary { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 600; }
+  .bar { height: 4px; background: #333; border-radius: 2px; overflow: hidden; margin: 14px 0 4px; }
+  .bar > div { height: 100%; width: 0; background: #fff; transition: width .2s; }
+  .card input[type=text] { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: #111; color: var(--text); font-size: 16px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <button class="hbtn" id="openBtn">開く</button>
+    <div class="logo">COLOR STUDIO</div>
+    <button class="hbtn primary" id="exportBtn" disabled>保存</button>
+  </header>
+
+  <div id="stage">
+    <div id="empty">
+      写真か動画を選んでね<br>
+      <span style="font-size:12px">プリセットで色味を変えて、そのまま保存できるよ</span><br>
+      <button class="big" id="emptyOpen">写真・動画を選ぶ</button>
+    </div>
+    <canvas id="view"></canvas>
+    <div id="origBadge">オリジナル</div>
+  </div>
+
+  <div id="videoBar">
+    <button id="playBtn">▶</button>
+    <input type="range" id="seek" min="0" max="1000" value="0">
+    <span id="timeLbl">0:00 / 0:00</span>
+  </div>
+
+  <div id="panel">
+    <div class="tabs">
+      <button class="tab on" data-tab="preset">プリセット</button>
+      <button class="tab" data-tab="adjust">調整</button>
+    </div>
+    <div id="presetPane">
+      <div id="strengthRow">
+        <span class="lbl" id="presetLbl">プリセットを選んでね</span>
+        <input type="range" id="strength" min="0" max="100" value="100" style="display:none">
+        <span id="strengthVal"></span>
+        <button id="delPreset">削除</button>
+      </div>
+      <div id="presets"></div>
+    </div>
+    <div id="adjustPane">
+      <div id="adjList"></div>
+      <div class="adjFoot">
+        <button id="resetAdj">調整をリセット</button>
+        <button id="savePresetBtn">今の色味をプリセットに保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="file" accept="image/*,video/*" hidden>
+
+<!-- 書き出し結果 -->
+<div class="modal" id="resultModal">
+  <div class="card">
+    <h3 id="resultTitle">書き出し完了</h3>
+    <div id="resultPreview"></div>
+    <p id="resultNote"></p>
+    <div class="row">
+      <button id="closeResult">閉じる</button>
+      <button class="primary" id="saveResult">保存する</button>
+    </div>
+  </div>
+</div>
+
+<!-- 動画書き出し中 -->
+<div class="modal" id="progressModal">
+  <div class="card">
+    <h3>動画を書き出し中…</h3>
+    <p>再生しながら色を焼き込んでるよ。終わるまでこの画面のまま待っててね</p>
+    <div class="bar"><div id="progressBar"></div></div>
+    <p id="progressTxt">0%</p>
+    <div class="row"><button id="cancelExport">キャンセル</button></div>
+  </div>
+</div>
+
+<!-- プリセット名入力 -->
+<div class="modal" id="nameModal">
+  <div class="card">
+    <h3>プリセットの名前</h3>
+    <input type="text" id="presetName" maxlength="16" placeholder="例: My Cafe">
+    <div class="row">
+      <button id="cancelName">やめる</button>
+      <button class="primary" id="okName">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+/* =========================================================
+   1. 調整項目 & プリセット定義
+   ========================================================= */
+const ADJ = [
+  { key: 'exposure',   label: '露出',       min: -1, max: 1 },
+  { key: 'contrast',   label: 'コントラスト', min: -1, max: 1 },
+  { key: 'saturation', label: '彩度',       min: -1, max: 1 },
+  { key: 'temp',       label: '色温度',     min: -1, max: 1 },
+  { key: 'tint',       label: '色かぶり',   min: -1, max: 1 },
+  { key: 'highlights', label: 'ハイライト', min: -1, max: 1 },
+  { key: 'shadows',    label: 'シャドウ',   min: -1, max: 1 },
+  { key: 'fade',       label: 'フェード',   min: 0,  max: 1 },
+  { key: 'vignette',   label: 'ビネット',   min: 0,  max: 1 },
+  { key: 'grain',      label: '粒子',       min: 0,  max: 1 },
+];
+const KEYS = ADJ.map(a => a.key);
+
+// sTint = 暗部に足す色 / hTint = 明部に足す色（RGBオフセット）
+const BUILTIN_PRESETS = [
+  // 淡いアナログフィルム風：黒を持ち上げたマット感、低コントラスト、少しくすませた彩度、ピーチ寄りのハイライト
+  { id: 'AN', name: 'Analog Soft', p: { exposure: .04, contrast: -.15, saturation: -.2, temp: .08, tint: .06, highlights: -.1, fade: .35, sTint: [.01, 0, .03], hTint: [.04, .02, .01] } },
+  { id: 'F1', name: 'Soft Film',   p: { contrast: -.1, saturation: -.1, fade: .35, temp: .15, grain: .25, sTint: [.02, 0, .04], hTint: [.04, .02, 0] } },
+  { id: 'W1', name: 'Golden',      p: { temp: .4, exposure: .05, saturation: .1, highlights: -.1, hTint: [.06, .03, -.02] } },
+  { id: 'C1', name: 'Cool Air',    p: { temp: -.35, tint: -.05, contrast: .05, saturation: -.05, fade: .15, sTint: [-.02, .01, .05] } },
+  { id: 'B1', name: 'Cream',       p: { temp: .15, exposure: .08, contrast: -.1, highlights: -.15, fade: .2, saturation: -.1, hTint: [.04, .03, 0] } },
+  { id: 'P1', name: 'Pastel',      p: { exposure: .12, contrast: -.2, saturation: -.15, fade: .3, tint: .08, hTint: [.03, 0, .03] } },
+  { id: 'R1', name: 'Rosé',        p: { tint: .15, temp: .1, fade: .2, hTint: [.05, 0, .02] } },
+  { id: 'G1', name: 'Green Film',  p: { tint: -.15, fade: .25, saturation: -.1, sTint: [0, .03, .02], grain: .2 } },
+  { id: 'T1', name: 'Teal&Orange', p: { contrast: .15, saturation: .1, sTint: [-.04, .02, .06], hTint: [.07, .03, -.04] } },
+  { id: 'V1', name: 'Vintage',     p: { temp: .25, saturation: -.25, fade: .4, sTint: [0, .03, .05], hTint: [.06, .04, 0], grain: .35, vignette: .3 } },
+  { id: 'D1', name: 'Moody',       p: { exposure: -.12, contrast: .15, saturation: -.3, shadows: -.1, temp: -.1, sTint: [0, .02, .04], vignette: .4 } },
+  { id: 'M1', name: 'Mono',        p: { saturation: -1, contrast: .2, grain: .3 } },
+  { id: 'M2', name: 'Matte Mono',  p: { saturation: -1, fade: .4, contrast: -.05, sTint: [.01, .01, .02] } },
+];
+
+const STORE_KEY = 'colorstudio.customPresets.v1';
+let customPresets = loadCustom();
+function loadCustom() { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || []; } catch { return []; } }
+function saveCustom() { localStorage.setItem(STORE_KEY, JSON.stringify(customPresets)); }
+const allPresets = () => [{ id: 'OR', name: 'Original', p: {} }, ...BUILTIN_PRESETS, ...customPresets];
+
+/* =========================================================
+   2. WebGL レンダラー（写真・動画共通）
+   ========================================================= */
+const VERT = `
+attribute vec2 a_pos;
+varying vec2 v_uv;
+void main() { v_uv = a_pos * 0.5 + 0.5; gl_Position = vec4(a_pos, 0.0, 1.0); }`;
+
+const FRAG = `
+precision highp float;
+varying vec2 v_uv;
+uniform sampler2D u_tex;
+uniform float u_original, u_time;
+uniform float u_exposure, u_contrast, u_saturation, u_temp, u_tint;
+uniform float u_highlights, u_shadows, u_fade, u_vignette, u_grain;
+uniform vec3 u_sTint, u_hTint;
+
+float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+
+void main() {
+  vec3 c = texture2D(u_tex, v_uv).rgb;
+  if (u_original > 0.5) { gl_FragColor = vec4(c, 1.0); return; }
+
+  c *= pow(2.0, u_exposure);                                   // 露出
+  c.r += u_temp * 0.08;  c.b -= u_temp * 0.08;                 // 色温度
+  c.g -= u_tint * 0.08;                                        // 色かぶり（+でマゼンタ）
+  c = (c - 0.5) * (1.0 + u_contrast) + 0.5;                    // コントラスト
+
+  float l = clamp(luma(c), 0.0, 1.0);
+  c += u_highlights * 0.3 * smoothstep(0.4, 1.0, l);           // ハイライト
+  c += u_shadows * 0.3 * (1.0 - smoothstep(0.0, 0.6, l));      // シャドウ
+
+  l = luma(c);
+  c = mix(vec3(l), c, 1.0 + u_saturation);                     // 彩度
+
+  l = clamp(luma(c), 0.0, 1.0);
+  c += u_sTint * 1.5 * (1.0 - l) + u_hTint * 1.5 * l;          // スプリットトーン
+
+  c = c * (1.0 - u_fade * 0.2) + u_fade * 0.15;                // フェード（黒を持ち上げる）
+
+  float r = length(v_uv - 0.5) * 1.414;
+  c *= 1.0 - u_vignette * 0.8 * smoothstep(0.3, 1.0, r);       // ビネット
+
+  float n = hash(gl_FragCoord.xy + fract(u_time) * 100.0) - 0.5;
+  c += n * u_grain * 0.18;                                     // 粒子
+
+  gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+}`;
+
+class Renderer {
+  constructor(canvas) {
+    this.canvas = canvas;
+    const gl = this.gl = canvas.getContext('webgl', { preserveDrawingBuffer: true, premultipliedAlpha: false, antialias: false });
+    if (!gl) throw new Error('WebGLが使えないブラウザみたい');
+    const sh = (type, src) => {
+      const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+      return s;
+    };
+    const prog = this.prog = gl.createProgram();
+    gl.attachShader(prog, sh(gl.VERTEX_SHADER, VERT));
+    gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FRAG));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, 'a_pos');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+    this.tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+
+    this.u = {};
+    for (const n of ['u_original','u_time','u_sTint','u_hTint', ...KEYS.map(k => 'u_' + k)])
+      this.u[n] = gl.getUniformLocation(prog, n);
+    this.maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+  }
+  upload(src) {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, src);
+  }
+  render(params, w, h, { original = false, time = 0 } = {}) {
+    const gl = this.gl, c = this.canvas;
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+    gl.viewport(0, 0, w, h);
+    for (const k of KEYS) gl.uniform1f(this.u['u_' + k], params[k] || 0);
+    gl.uniform3fv(this.u.u_sTint, params.sTint || [0,0,0]);
+    gl.uniform3fv(this.u.u_hTint, params.hTint || [0,0,0]);
+    gl.uniform1f(this.u.u_original, original ? 1 : 0);
+    gl.uniform1f(this.u.u_time, time);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+}
+
+/* =========================================================
+   3. 状態
+   ========================================================= */
+const $ = id => document.getElementById(id);
+const view = $('view');
+let main, thumbR;
+try { main = new Renderer(view); thumbR = new Renderer(document.createElement('canvas')); }
+catch (e) { alert(e.message); }
+
+const state = {
+  type: null,          // 'image' | 'video'
+  src: null,           // HTMLImageElement | HTMLVideoElement
+  w: 0, h: 0,          // 元の解像度
+  presetId: 'OR',
+  strength: 1,
+  adj: Object.fromEntries(KEYS.map(k => [k, 0])),
+  showOriginal: false,
+  exporting: false,
+};
+
+function currentPreset() { return allPresets().find(p => p.id === state.presetId) || allPresets()[0]; }
+
+// プリセット × 強さ + 手動調整 を合成
+function effectiveParams(preset = currentPreset(), strength = state.strength, adj = state.adj) {
+  const out = {};
+  const p = preset.p;
+  for (const k of KEYS) out[k] = (adj[k] || 0) + (p[k] || 0) * strength;
+  out.sTint = (p.sTint || [0,0,0]).map(v => v * strength);
+  out.hTint = (p.hTint || [0,0,0]).map(v => v * strength);
+  return out;
+}
+
+function fitSize(w, h, maxEdge) {
+  const s = Math.min(1, maxEdge / Math.max(w, h));
+  return [Math.round(w * s), Math.round(h * s)];
+}
+
+/* =========================================================
+   4. 描画
+   ========================================================= */
+let needsRender = false;
+function requestRender() { needsRender = true; }
+
+function drawMain() {
+  if (!state.src) return;
+  const [w, h] = state.exporting ? exportSize() : fitSize(state.w, state.h, state.type === 'video' ? 1280 : 1600);
+  if (state.type === 'video') {
+    if (state.src.readyState < 2) return;
+    main.upload(state.src);
+  }
+  main.render(effectiveParams(), w, h, { original: state.showOriginal, time: performance.now() / 1000 });
+}
+
+function loop() {
+  const v = state.type === 'video' ? state.src : null;
+  const playing = v && !v.paused && !v.ended;
+  // 粒子は動画再生中だけ毎フレーム動かす
+  if (needsRender || playing) { drawMain(); needsRender = false; }
+  if (v) updateTimeUI();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+/* =========================================================
+   5. ファイル読み込み
+   ========================================================= */
+function openPicker() { if (!state.exporting) $('file').click(); }
+$('openBtn').onclick = openPicker;
+$('emptyOpen').onclick = openPicker;
+
+$('file').onchange = e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  if (state.src && state.type === 'video') { state.src.pause(); URL.revokeObjectURL(state.src.src); }
+  const url = URL.createObjectURL(f);
+  if (f.type.startsWith('video/')) loadVideo(url); else loadImage(url);
+};
+
+function loadImage(url) {
+  const img = new Image();
+  img.onload = () => {
+    // GPUの上限より大きい写真は縮小
+    const [w, h] = fitSize(img.naturalWidth, img.naturalHeight, Math.min(main.maxTex, 4096));
+    let src = img;
+    if (w !== img.naturalWidth) {
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h); src = c;
+    }
+    setSource('image', src, w, h);
+    main.upload(src);
+    URL.revokeObjectURL(url);
+  };
+  img.onerror = () => alert('この画像は開けなかったよ（HEICはSafariで開いてね）');
+  img.src = url;
+}
+
+function loadVideo(url) {
+  const v = document.createElement('video');
+  v.playsInline = true; v.muted = true; v.loop = true; v.preload = 'auto';
+  v.setAttribute('playsinline', '');
+  v.src = url;
+  v.onloadeddata = () => {
+    setSource('video', v, v.videoWidth, v.videoHeight);
+    v.currentTime = Math.min(0.05, v.duration || 0);
+  };
+  v.onseeked = () => { requestRender(); if (v.paused) refreshThumbs(); };
+  v.onerror = () => alert('この動画は再生できない形式みたい');
+  v.load();
+}
+
+function setSource(type, src, w, h) {
+  Object.assign(state, { type, src, w, h });
+  $('empty').style.display = 'none';
+  view.style.display = 'block';
+  $('exportBtn').disabled = false;
+  $('videoBar').style.display = type === 'video' ? 'flex' : 'none';
+  $('playBtn').textContent = '▶';
+  requestRender();
+  refreshThumbs();
+}
+
+/* =========================================================
+   6. プリセット一覧（サムネイル付き）
+   ========================================================= */
+const thumbSrc = document.createElement('canvas');
+
+function buildPresetStrip() {
+  const wrap = $('presets');
+  wrap.innerHTML = '';
+  for (const p of allPresets()) {
+    const el = document.createElement('button');
+    el.className = 'preset' + (p.id === state.presetId ? ' on' : '');
+    el.dataset.id = p.id;
+    el.innerHTML = `<canvas width="144" height="144"></canvas><div class="code">${esc(p.code || p.id)}</div><div class="name">${esc(p.name)}</div>`;
+    el.onclick = () => selectPreset(p.id);
+    wrap.appendChild(el);
+  }
+  refreshThumbs();
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+function refreshThumbs() {
+  if (!state.src || !thumbR) return;
+  // 元素材を正方形に切り抜いて小さくする
+  const S = 144, sw = state.w, sh = state.h, m = Math.min(sw, sh);
+  thumbSrc.width = S; thumbSrc.height = S;
+  thumbSrc.getContext('2d').drawImage(state.src, (sw - m) / 2, (sh - m) / 2, m, m, 0, 0, S, S);
+  thumbR.upload(thumbSrc);
+  for (const el of document.querySelectorAll('.preset')) {
+    const p = allPresets().find(x => x.id === el.dataset.id);
+    const cv = el.querySelector('canvas');
+    if (!p || !cv) continue;
+    thumbR.render(effectiveParams(p, 1, {}), S, S);
+    cv.getContext('2d').drawImage(thumbR.canvas, 0, 0);
+  }
+}
+
+function selectPreset(id) {
+  state.presetId = id;
+  state.strength = 1;
+  for (const el of document.querySelectorAll('.preset')) el.classList.toggle('on', el.dataset.id === id);
+  updateStrengthUI();
+  requestRender();
+}
+
+function updateStrengthUI() {
+  const p = currentPreset(), isOrig = p.id === 'OR';
+  $('presetLbl').textContent = isOrig ? 'プリセットを選んでね' : `${p.code || p.id}  強さ`;
+  $('strength').style.display = isOrig ? 'none' : '';
+  $('strength').value = Math.round(state.strength * 100);
+  $('strengthVal').textContent = isOrig ? '' : Math.round(state.strength * 100);
+  $('delPreset').style.display = p.custom ? '' : 'none';
+}
+$('strength').oninput = e => { state.strength = e.target.value / 100; $('strengthVal').textContent = e.target.value; requestRender(); };
+
+$('delPreset').onclick = () => {
+  const p = currentPreset();
+  if (!p.custom || !confirm(`「${p.name}」を削除する？`)) return;
+  customPresets = customPresets.filter(x => x.id !== p.id);
+  saveCustom();
+  state.presetId = 'OR';
+  buildPresetStrip(); updateStrengthUI(); requestRender();
+};
+
+/* =========================================================
+   7. 調整スライダー
+   ========================================================= */
+function buildAdjust() {
+  const list = $('adjList');
+  list.innerHTML = '';
+  for (const a of ADJ) {
+    const row = document.createElement('div');
+    row.className = 'adj';
+    row.innerHTML = `<label>${a.label}</label>
+      <input type="range" min="${a.min * 100}" max="${a.max * 100}" step="1" value="0">
+      <span class="val">0</span>`;
+    const input = row.querySelector('input'), val = row.querySelector('.val');
+    const set = v => {
+      state.adj[a.key] = v / 100;
+      input.value = v; val.textContent = v > 0 ? '+' + v : v;
+      row.classList.toggle('changed', +v !== 0);
+      requestRender();
+    };
+    input.oninput = () => set(+input.value);
+    input.ondblclick = () => set(0);          // ダブルタップで0に戻す
+    row.querySelector('label').onclick = () => set(0);
+    row._set = set;
+    list.appendChild(row);
+  }
+}
+$('resetAdj').onclick = () => { for (const r of $('adjList').children) r._set(0); };
+
+for (const t of document.querySelectorAll('.tab')) {
+  t.onclick = () => {
+    for (const x of document.querySelectorAll('.tab')) x.classList.toggle('on', x === t);
+    $('presetPane').style.display = t.dataset.tab === 'preset' ? '' : 'none';
+    $('adjustPane').style.display = t.dataset.tab === 'adjust' ? 'block' : 'none';
+  };
+}
+
+// 今の色味（プリセット×強さ＋調整）をマイプリセットとして保存
+$('savePresetBtn').onclick = () => { $('presetName').value = ''; $('nameModal').classList.add('show'); setTimeout(() => $('presetName').focus(), 50); };
+$('cancelName').onclick = () => $('nameModal').classList.remove('show');
+$('okName').onclick = () => {
+  const name = $('presetName').value.trim() || 'My Preset';
+  const n = customPresets.length + 1;
+  const p = { id: 'U' + Date.now(), code: 'MY' + n, name, custom: true, p: effectiveParams() };
+  customPresets.push(p); saveCustom();
+  $('nameModal').classList.remove('show');
+  for (const r of $('adjList').children) r._set(0);
+  buildPresetStrip();
+  selectPreset(p.id);
+  document.querySelector('.tab[data-tab=preset]').click();
+  document.querySelector(`.preset[data-id="${p.id}"]`)?.scrollIntoView({ inline: 'center', behavior: 'smooth' });
+};
+
+/* =========================================================
+   8. 長押しでオリジナルと比較
+   ========================================================= */
+const showOrig = on => { state.showOriginal = on; $('origBadge').style.display = on ? 'block' : 'none'; requestRender(); };
+view.addEventListener('pointerdown', () => showOrig(true));
+for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) view.addEventListener(ev, () => showOrig(false));
+view.addEventListener('contextmenu', e => e.preventDefault());
+
+/* =========================================================
+   9. 動画の再生コントロール
+   ========================================================= */
+const fmt = t => { t = Math.max(0, t || 0); return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`; };
+let seeking = false;
+function updateTimeUI() {
+  const v = state.src;
+  if (!seeking && v.duration) $('seek').value = (v.currentTime / v.duration) * 1000;
+  $('timeLbl').textContent = `${fmt(v.currentTime)} / ${fmt(v.duration)}`;
+}
+$('playBtn').onclick = () => {
+  const v = state.src; if (!v || state.exporting) return;
+  if (v.paused) { v.play(); $('playBtn').textContent = '❚❚'; } else { v.pause(); $('playBtn').textContent = '▶'; refreshThumbs(); }
+};
+$('seek').oninput = e => { seeking = true; const v = state.src; if (v?.duration) v.currentTime = (e.target.value / 1000) * v.duration; };
+$('seek').onchange = () => { seeking = false; };
+
+/* =========================================================
+   10. 書き出し
+   ========================================================= */
+let exportSize = () => fitSize(state.w, state.h, 1920);
+let resultBlob = null, resultName = '';
+
+$('exportBtn').onclick = () => {
+  if (!state.src || state.exporting) return;
+  state.type === 'image' ? exportImage() : exportVideo();
+};
+
+function stamp() { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; }
+
+function exportImage() {
+  // フル解像度で描き直してJPEG化
+  main.render(effectiveParams(), state.w, state.h, { time: 0.5 });
+  view.toBlob(blob => {
+    requestRender(); // プレビューサイズに戻す
+    showResult(blob, `colorstudio_${stamp()}.jpg`, 'image');
+  }, 'image/jpeg', 0.95);
+}
+
+let audioCtx, audioSrc, audioDest, recorder, cancelled = false;
+
+function pickMime() {
+  const list = ['video/mp4;codecs=avc1,mp4a', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+  return list.find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
+}
+
+async function exportVideo() {
+  const v = state.src;
+  if (!window.MediaRecorder || !view.captureStream) {
+    alert('このブラウザは動画の書き出しに対応してないみたい。最新のSafari / Chromeで試してね');
+    return;
+  }
+  state.exporting = true;
+  cancelled = false;
+  v.pause();
+  v.loop = false;
+
+  // 音声：動画の音をMediaStreamに流す（スピーカーにも出す）
+  const tracks = [];
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (!audioSrc) {
+      audioSrc = audioCtx.createMediaElementSource(v);
+      audioDest = audioCtx.createMediaStreamDestination();
+      audioSrc.connect(audioDest);
+      audioSrc.connect(audioCtx.destination);
+    }
+    await audioCtx.resume();
+    v.muted = false;
+    tracks.push(...audioDest.stream.getAudioTracks());
+  } catch (e) { console.warn('音声なしで書き出し', e); }
+
+  $('progressBar').style.width = '0%';
+  $('progressTxt').textContent = '0%';
+  $('progressModal').classList.add('show');
+
+  // 頭出し
+  await new Promise(r => { v.onseeked = r; v.currentTime = 0; });
+  v.onseeked = () => { requestRender(); if (v.paused) refreshThumbs(); };
+  drawMain();
+
+  const stream = view.captureStream(30);
+  tracks.forEach(t => stream.addTrack(t));
+  const mime = pickMime();
+  const [ew, eh] = exportSize();
+  recorder = new MediaRecorder(stream, { mimeType: mime || undefined, videoBitsPerSecond: Math.round(ew * eh * 30 * 0.2) });
+  const chunks = [];
+  recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
+
+  const finish = new Promise(r => recorder.onstop = r);
+  const onProgress = () => {
+    const pct = Math.min(100, Math.round((v.currentTime / v.duration) * 100));
+    $('progressBar').style.width = pct + '%';
+    $('progressTxt').textContent = pct + '%';
+  };
+  v.addEventListener('timeupdate', onProgress);
+  v.onended = () => setTimeout(() => recorder.state !== 'inactive' && recorder.stop(), 150);
+
+  recorder.start(250);
+  await v.play();
+  await finish;
+
+  v.removeEventListener('timeupdate', onProgress);
+  v.onended = null;
+  v.muted = true; v.loop = true;
+  stream.getVideoTracks().forEach(t => t.stop());
+  state.exporting = false;
+  $('progressModal').classList.remove('show');
+  $('playBtn').textContent = '▶';
+  requestRender();
+
+  if (cancelled) return;
+  const type = recorder.mimeType || mime || 'video/webm';
+  const ext = type.includes('mp4') ? 'mp4' : 'webm';
+  showResult(new Blob(chunks, { type: type.split(';')[0] }), `colorstudio_${stamp()}.${ext}`, 'video');
+}
+
+$('cancelExport').onclick = () => {
+  cancelled = true;
+  state.src.pause();
+  if (recorder && recorder.state !== 'inactive') recorder.stop();
+};
+
+function showResult(blob, name, kind) {
+  resultBlob = blob; resultName = name;
+  const url = URL.createObjectURL(blob);
+  const pv = $('resultPreview');
+  pv.innerHTML = kind === 'image'
+    ? `<img src="${url}">`
+    : `<video src="${url}" controls playsinline loop></video>`;
+  const mb = (blob.size / 1024 / 1024).toFixed(1);
+  $('resultNote').textContent = `${name}（${mb}MB）` + (navigator.canShare ? ' ／ iPhoneは「保存する」→「画像を保存 / ビデオを保存」で写真アプリに入るよ' : '');
+  $('resultModal').classList.add('show');
+}
+
+$('closeResult').onclick = () => {
+  $('resultModal').classList.remove('show');
+  const m = $('resultPreview').querySelector('img,video');
+  if (m) URL.revokeObjectURL(m.src);
+  $('resultPreview').innerHTML = '';
+};
+
+$('saveResult').onclick = async () => {
+  if (!resultBlob) return;
+  const file = new File([resultBlob], resultName, { type: resultBlob.type });
+  // スマホは共有シート（写真アプリに保存できる）、PCはダウンロード
+  const mobile = /iPhone|iPad|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.userAgent));
+  if (mobile && navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); return; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(resultBlob); a.download = resultName;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+};
+
+/* =========================================================
+   起動
+   ========================================================= */
+buildPresetStrip();
+buildAdjust();
+updateStrengthUI();
+</script>
+</body>
+</html>

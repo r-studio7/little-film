@@ -6,11 +6,11 @@
 <meta name="theme-color" content="#111111">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Color Studio">
+<meta name="apple-mobile-web-app-title" content="Little Film">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-180.png">
 <link rel="manifest" href="manifest.json">
-<title>Color Studio</title>
+<title>R's Little Film</title>
 <style>
   :root {
     --bg: #111; --panel: #1a1a1a; --line: #2a2a2a; --text: #eee; --sub: #888; --accent: #f2f2f2;
@@ -91,7 +91,7 @@
 <div id="app">
   <header>
     <button class="hbtn" id="openBtn">開く</button>
-    <div class="logo">COLOR STUDIO</div>
+    <div class="logo">R'S LITTLE FILM</div>
     <button class="hbtn primary" id="exportBtn" disabled>保存</button>
   </header>
 
@@ -601,7 +601,7 @@ function exportImage() {
   main.render(effectiveParams(), state.w, state.h, { time: 0.5 });
   view.toBlob(blob => {
     requestRender(); // プレビューサイズに戻す
-    showResult(blob, `colorstudio_${stamp()}.jpg`, 'image');
+    showResult(blob, `littlefilm_${stamp()}.jpg`, 'image');
   }, 'image/jpeg', 0.95);
 }
 
@@ -680,7 +680,7 @@ async function exportVideo() {
   if (cancelled) return;
   const type = recorder.mimeType || mime || 'video/webm';
   const ext = type.includes('mp4') ? 'mp4' : 'webm';
-  showResult(new Blob(chunks, { type: type.split(';')[0] }), `colorstudio_${stamp()}.${ext}`, 'video');
+  showResult(new Blob(chunks, { type: type.split(';')[0] }), `littlefilm_${stamp()}.${ext}`, 'video');
 }
 
 $('cancelExport').onclick = () => {

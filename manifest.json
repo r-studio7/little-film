@@ -1,6 +1,6 @@
 {
-  "name": "Color Studio",
-  "short_name": "Color Studio",
+  "name": "R's Little Film",
+  "short_name": "Little Film",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#111111",

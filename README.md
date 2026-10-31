@@ -13,7 +13,7 @@ VSCOみたいにプリセットで色味を変えられる、写真・動画（1
 
 ## 使い方
 - PC：`index.html` をブラウザで開くだけ
-- iPhone：https://r-studio7.github.io/color-studio/ をSafariで開く →「ホーム画面に追加」でアプリっぽく使える
+- iPhone：https://r-studio7.github.io/little-film/ をSafariで開く →「ホーム画面に追加」でアプリっぽく使える
 
 ## 注意
 - 動画の書き出しは「再生しながら録画」方式なので、動画の長さと同じだけ時間がかかる（短い動画向け）

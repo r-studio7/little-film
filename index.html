@@ -195,8 +195,9 @@ const KEYS = ADJ.map(a => a.key);
 
 // sTint = 暗部に足す色 / hTint = 明部に足す色（RGBオフセット）
 const BUILTIN_PRESETS = [
-  // アナログフィルム風：A6の比較写真から合わせた設定。全体を少し落として締め、暗部は潰さずに持ち上げる
-  { id: 'AN', name: 'Analog', p: { exposure: -.25, contrast: .28, shadows: .54 } },
+  // アナログフィルム風：参考写真（加工前→加工後）の色の変化に合わせた設定。
+  // 黒を締めてコントラストを上げ、明るい部分は色を抜いて白っぽく、わずかにマゼンタ寄り
+  { id: 'AN', name: 'Analog', p: { exposure: .06, contrast: .21, saturation: .02, temp: .07, tint: .19, highlights: -.16, shadows: -.52, fade: .84, sTint: [.005, .022, .024], hTint: [.04, .038, -.007], hiDesat: .62 } },
   { id: 'F1', name: 'Soft Film',   p: { contrast: -.1, saturation: -.1, fade: .35, temp: .15, grain: .25, sTint: [.02, 0, .04], hTint: [.04, .02, 0] } },
   { id: 'W1', name: 'Golden',      p: { temp: .4, exposure: .05, saturation: .1, highlights: -.1, hTint: [.06, .03, -.02] } },
   { id: 'C1', name: 'Cool Air',    p: { temp: -.35, tint: -.05, contrast: .05, saturation: -.05, fade: .15, sTint: [-.02, .01, .05] } },
@@ -233,6 +234,7 @@ uniform float u_original, u_time;
 uniform float u_exposure, u_contrast, u_saturation, u_temp, u_tint;
 uniform float u_highlights, u_shadows, u_fade, u_vignette, u_grain;
 uniform vec3 u_sTint, u_hTint;
+uniform float u_hiDesat;
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
@@ -255,6 +257,9 @@ void main() {
 
   l = clamp(luma(c), 0.0, 1.0);
   c += u_sTint * 1.5 * (1.0 - l) + u_hTint * 1.5 * l;          // スプリットトーン
+
+  l = clamp(luma(c), 0.0, 1.0);
+  c += (vec3(l) - c) * u_hiDesat * smoothstep(0.45, 0.9, l);   // 明部だけ色を抜く（ライトを白っぽく）
 
   c = c * (1.0 - u_fade * 0.2) + u_fade * 0.15;                // フェード（黒を持ち上げる）
 
@@ -299,7 +304,7 @@ class Renderer {
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
     this.u = {};
-    for (const n of ['u_original','u_time','u_sTint','u_hTint', ...KEYS.map(k => 'u_' + k)])
+    for (const n of ['u_original','u_time','u_sTint','u_hTint','u_hiDesat', ...KEYS.map(k => 'u_' + k)])
       this.u[n] = gl.getUniformLocation(prog, n);
     this.maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
   }
@@ -315,6 +320,7 @@ class Renderer {
     for (const k of KEYS) gl.uniform1f(this.u['u_' + k], params[k] || 0);
     gl.uniform3fv(this.u.u_sTint, params.sTint || [0,0,0]);
     gl.uniform3fv(this.u.u_hTint, params.hTint || [0,0,0]);
+    gl.uniform1f(this.u.u_hiDesat, params.hiDesat || 0);
     gl.uniform1f(this.u.u_original, original ? 1 : 0);
     gl.uniform1f(this.u.u_time, time);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -350,6 +356,7 @@ function effectiveParams(preset = currentPreset(), strength = state.strength, ad
   for (const k of KEYS) out[k] = (adj[k] || 0) + (p[k] || 0) * strength;
   out.sTint = (p.sTint || [0,0,0]).map(v => v * strength);
   out.hTint = (p.hTint || [0,0,0]).map(v => v * strength);
+  out.hiDesat = (p.hiDesat || 0) * strength;
   return out;
 }
 

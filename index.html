@@ -195,8 +195,8 @@ const KEYS = ADJ.map(a => a.key);
 
 // sTint = 暗部に足す色 / hTint = 明部に足す色（RGBオフセット）
 const BUILTIN_PRESETS = [
-  // 淡いアナログフィルム風：黒を持ち上げたマット感、低コントラスト、少しくすませた彩度、ピーチ寄りのハイライト
-  { id: 'AN', name: 'Analog Soft', p: { exposure: .04, contrast: -.15, saturation: -.2, temp: .08, tint: .06, highlights: -.1, fade: .35, sTint: [.01, 0, .03], hTint: [.04, .02, .01] } },
+  // アナログフィルム風：A6の比較写真から合わせた設定。全体を少し落として締め、暗部は潰さずに持ち上げる
+  { id: 'AN', name: 'Analog', p: { exposure: -.25, contrast: .28, shadows: .54 } },
   { id: 'F1', name: 'Soft Film',   p: { contrast: -.1, saturation: -.1, fade: .35, temp: .15, grain: .25, sTint: [.02, 0, .04], hTint: [.04, .02, 0] } },
   { id: 'W1', name: 'Golden',      p: { temp: .4, exposure: .05, saturation: .1, highlights: -.1, hTint: [.06, .03, -.02] } },
   { id: 'C1', name: 'Cool Air',    p: { temp: -.35, tint: -.05, contrast: .05, saturation: -.05, fade: .15, sTint: [-.02, .01, .05] } },

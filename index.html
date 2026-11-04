@@ -171,6 +171,17 @@
   .tabs { flex: 0 0 auto; }
   #presetPane, #adjustPane, #filmPane, #textPane, #favPane, #geoPane, #layoutPane {
     max-height: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+  /* まとめて加工 */
+  #batchBar { display: none; padding: 0 16px 6px; }
+  #batchBar .bhead { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #ccc; padding-bottom: 6px; }
+  #batchBar .bhead button { font-size: 11px; color: var(--sub); }
+  #batchThumbs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+  #batchThumbs::-webkit-scrollbar { display: none; }
+  #batchThumbs button { flex: 0 0 auto; width: 46px; height: 46px; border-radius: 6px; overflow: hidden; outline: 2px solid transparent; outline-offset: 1px; background: #222; }
+  #batchThumbs button.on { outline-color: #fff; }
+  #batchThumbs img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .batchGrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 10px; }
+  .batchGrid img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; }
 </style>
 </head>
 <body>
@@ -184,6 +195,7 @@
   <div id="stage">
     <div id="empty">
       写真か動画を選んでね<br>
+      <span style="font-size:12px">写真は何枚かまとめて選ぶと、同じ加工を一気にかけられるよ</span><br>
       <span style="font-size:12px">プリセットで色味を変えて、そのまま保存できるよ</span><br>
       <button class="big" id="emptyOpen">写真・動画を選ぶ</button><br>
       <span class="ver" style="font-size:11px;color:#555"></span>
@@ -195,6 +207,10 @@
     <div id="grid"></div>
   </div>
 
+  <div id="batchBar">
+    <div class="bhead"><span id="batchLbl"></span><button id="batchExit">やめる</button></div>
+    <div id="batchThumbs"></div>
+  </div>
   <div id="videoBar">
     <button id="playBtn">▶</button>
     <input type="range" id="seek" min="0" max="1000" value="0">
@@ -317,7 +333,7 @@
   </div>
 </div>
 
-<input type="file" id="file" accept="image/*,video/*" hidden>
+<input type="file" id="file" accept="image/*,video/*" multiple hidden>
 <div id="toast"></div>
 
 <!-- 書き出し結果 -->
@@ -336,8 +352,8 @@
 <!-- 動画書き出し中 -->
 <div class="modal" id="progressModal">
   <div class="card">
-    <h3>動画を書き出し中…</h3>
-    <p>再生しながら色を焼き込んでるよ。終わるまでこの画面のまま待っててね</p>
+    <h3 id="progressTitle">動画を書き出し中…</h3>
+    <p id="progressDesc">再生しながら色を焼き込んでるよ。終わるまでこの画面のまま待っててね</p>
     <div class="bar"><div id="progressBar"></div></div>
     <p id="progressTxt">0%</p>
     <div class="row"><button id="cancelExport">キャンセル</button></div>
@@ -359,7 +375,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 3.4';
+const APP_VERSION = 'ver 3.5';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -1044,9 +1060,18 @@ $('openBtn').onclick = openPicker;
 $('emptyOpen').onclick = openPicker;
 
 $('file').onchange = e => {
-  const f = e.target.files[0];
+  const files = [...e.target.files];
   e.target.value = '';
+  const f = files[0];
   if (!f) return;
+  const imgs = files.filter(x => !x.type.startsWith('video/'));
+  if (files.length > 1 && imgs.length > 1) {
+    if (imgs.length < files.length) toast('動画は1本ずつだから、写真だけまとめたよ');
+    if (state.src && state.type === 'video') { state.src.pause(); URL.revokeObjectURL(state.src.src); }
+    startBatch(imgs);
+    return;
+  }
+  exitBatch();
   if (state.src && state.type === 'video') { state.src.pause(); URL.revokeObjectURL(state.src.src); }
   const url = URL.createObjectURL(f);
   ready = null;
@@ -1057,6 +1082,7 @@ $('file').onchange = e => {
 };
 
 function loadImage(url) {
+  return new Promise(resolve => {
   const img = new Image();
   img.onload = () => {
     // GPUの上限より大きい写真は縮小
@@ -1071,9 +1097,138 @@ function loadImage(url) {
     ready = null;
     setSource('image', src, w, h);
     URL.revokeObjectURL(url);
+    resolve(true);
   };
-  img.onerror = () => alert('この画像は開けなかったよ（HEICはSafariで開いてね）');
+  img.onerror = () => { alert('この画像は開けなかったよ（HEICはSafariで開いてね）'); resolve(false); };
   img.src = url;
+  });
+}
+
+/* =========================================================
+   まとめて加工（写真を何枚か選んで、同じ加工をかけて一気に保存）
+   ========================================================= */
+state.batch = null;      // [{ file, geo, view, date, thumb }]
+state.batchIdx = 0;
+
+function makeThumb(file) {
+  return new Promise(resolve => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      const S = 120, m = Math.min(img.naturalWidth, img.naturalHeight), c = document.createElement('canvas');
+      c.width = c.height = S;
+      c.getContext('2d').drawImage(img, (img.naturalWidth - m) / 2, (img.naturalHeight - m) / 2, m, m, 0, 0, S, S);
+      URL.revokeObjectURL(url); resolve(c.toDataURL('image/jpeg', 0.7));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(''); };
+    img.src = url;
+  });
+}
+
+async function startBatch(files) {
+  state.batch = files.map(file => ({ file, geo: null, view: null, date: null, thumb: '' }));
+  state.batchIdx = -1;
+  renderBatchBar();
+  $('batchBar').style.display = 'block';
+  await openBatchItem(0);
+  toast(`${files.length}枚まとめて加工するよ。1枚加工すれば全部に同じ加工がかかるよ`);
+  for (const it of state.batch) { it.thumb = await makeThumb(it.file); renderBatchBar(); }
+}
+
+$('batchExit').onclick = () => { exitBatch(); toast('1枚ずつの編集にもどったよ'); };
+function exitBatch() {
+  state.batch = null;
+  $('batchBar').style.display = 'none';
+  $('exportBtn').textContent = '保存';
+}
+
+function renderBatchBar() {
+  if (!state.batch) return;
+  const n = state.batch.length;
+  $('batchLbl').textContent = `まとめて加工中：${n}枚（タップで切り替え）`;
+  $('exportBtn').textContent = `${n}枚保存`;
+  const bt = $('batchThumbs'); bt.innerHTML = '';
+  state.batch.forEach((it, i) => {
+    const b = document.createElement('button');
+    b.className = i === state.batchIdx ? 'on' : '';
+    b.innerHTML = it.thumb ? `<img src="${it.thumb}" alt="">` : '';
+    b.onclick = () => { if (!state.exporting) openBatchItem(i); };
+    bt.appendChild(b);
+  });
+}
+
+// 写真ごとに違うもの（角度・切り取り位置・日付）は1枚ずつ覚えておく
+function saveBatchItemState() {
+  const it = state.batch?.[state.batchIdx]; if (!it) return;
+  it.geo = { ...state.geo };
+  it.view = { cx: state.layout.cx, cy: state.layout.cy, zoom: state.layout.zoom };
+  it.date = state.film.date;
+}
+async function openBatchItem(i) {
+  if (!state.batch) return;
+  saveBatchItemState();
+  state.batchIdx = i;
+  const it = state.batch[i];
+  if (it.geo) {
+    Object.assign(state.geo, it.geo);
+    for (const r of $('geoList').children) r._set(r._key === 'angle' ? state.geo.angle : Math.round(state.geo[r._key] * 100));
+  } else resetGeo(true);
+  Object.assign(state.layout, it.view || { cx: 0.5, cy: 0.5, zoom: 1 });
+  if (it.date) { state.film.date = it.date; $('stampDate').value = it.date; } else setStampDate(new Date(it.file.lastModified || Date.now()));
+  ready = null;
+  renderBatchBar();
+  await loadImage(URL.createObjectURL(it.file));
+}
+
+let batchCancel = false, batchFiles = null;
+async function exportBatch() {
+  state.exporting = true; batchCancel = false;
+  saveBatchItemState();
+  const back = state.batchIdx, n = state.batch.length, files = [], st = stamp();
+  $('progressTitle').textContent = `${n}枚まとめて保存中…`;
+  $('progressDesc').textContent = '1枚ずつ同じ加工をかけてるよ。終わるまで待っててね';
+  $('progressBar').style.width = '0%'; $('progressTxt').textContent = `0 / ${n}`;
+  $('progressModal').classList.add('show');
+  for (let i = 0; i < n && !batchCancel; i++) {
+    state.exporting = false;            // 読み込み中はふつうに描画
+    await openBatchItem(i);
+    drawMain();
+    const blob = await prepareImage();
+    if (blob) files.push(new File([blob], `littlefilm_${st}_${String(i + 1).padStart(2, '0')}.jpg`, { type: 'image/jpeg' }));
+    $('progressBar').style.width = Math.round((i + 1) / n * 100) + '%';
+    $('progressTxt').textContent = `${i + 1} / ${n}`;
+  }
+  state.exporting = false;
+  $('progressModal').classList.remove('show');
+  $('progressTitle').textContent = '動画を書き出し中…';
+  $('progressDesc').textContent = '再生しながら色を焼き込んでるよ。終わるまでこの画面のまま待っててね';
+  await openBatchItem(back);
+  if (batchCancel || !files.length) return;
+  showBatchResult(files);
+}
+
+function showBatchResult(files) {
+  batchFiles = files; resultBlob = null;
+  const urls = files.slice(0, 8).map(f => URL.createObjectURL(f));
+  $('resultPreview').innerHTML = `<div class="batchGrid">${urls.map(u => `<img src="${u}">`).join('')}</div>`;
+  const mb = (files.reduce((a, f) => a + f.size, 0) / 1024 / 1024).toFixed(1);
+  $('resultNote').textContent = `${files.length}枚できたよ（合計${mb}MB）` + (files.length > 8 ? ' ／ ここには8枚まで表示してるよ' : '');
+  $('resultModal').classList.add('show');
+}
+
+async function saveFiles(files) {
+  const mobile = /iPhone|iPad|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.userAgent));
+  if (mobile && navigator.canShare?.({ files })) {
+    try { await navigator.share({ files }); return; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  for (const f of files) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(f); a.download = f.name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    await new Promise(r => setTimeout(r, 300));
+  }
+  toast(`${files.length}枚保存したよ`);
 }
 
 function loadVideo(url) {
@@ -1400,6 +1555,7 @@ function buildGeo() {
     input.oninput = () => row._set(+input.value);
     input.ondblclick = () => row._set(0);
     row.querySelector('label').onclick = () => row._set(0);
+    row._key = a.key;
     $('geoList').appendChild(row);
   }
   $('rotBtn').onclick = () => { state.geo.rot = (state.geo.rot + 1) % 4; requestRender(); };
@@ -1897,6 +2053,7 @@ let resultBlob = null, resultName = '';
 
 $('exportBtn').onclick = () => {
   if (!state.src || state.exporting) return;
+  if (state.batch && state.type === 'image') return exportBatch();
   state.type === 'image' ? exportImage() : exportVideo();
 };
 
@@ -1994,6 +2151,8 @@ async function exportVideo() {
 }
 
 $('cancelExport').onclick = () => {
+  batchCancel = true;
+  if (state.batch && state.type === 'image') return;
   cancelled = true;
   state.src.pause();
   if (recorder && recorder.state !== 'inactive') recorder.stop();
@@ -2013,12 +2172,19 @@ function showResult(blob, name, kind) {
 
 $('closeResult').onclick = () => {
   $('resultModal').classList.remove('show');
+  $('resultPreview').querySelectorAll('.batchGrid img').forEach(im => URL.revokeObjectURL(im.src));
   const m = $('resultPreview').querySelector('img,video');
   if (m) URL.revokeObjectURL(m.src);
   $('resultPreview').innerHTML = '';
 };
 
 $('saveResult').onclick = async () => {
+  if (batchFiles && !resultBlob) {
+    const fs = batchFiles; batchFiles = null;
+    $('closeResult').onclick();
+    await saveFiles(fs);
+    return;
+  }
   if (!resultBlob) return;
   const b = resultBlob, n = resultName;
   $('closeResult').onclick();

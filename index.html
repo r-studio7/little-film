@@ -352,7 +352,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 2.8';
+const APP_VERSION = 'ver 2.9';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -783,15 +783,29 @@ function drawText(g, t, w, h) {
   g.restore();
 }
 // 字間つきで中央揃えに描く（1文字ずつ）
+// 字間を広げても、フォント本来のカーニング（文字ごとの間隔の調整）を崩さない
+const NATIVE_SPACING = 'letterSpacing' in CanvasRenderingContext2D.prototype;
 function lineWidth(g, ln, sp) {
-  const chars = [...ln];
-  return chars.reduce((a, c) => a + g.measureText(c).width, 0) + sp * Math.max(0, chars.length - 1);
+  return g.measureText(ln).width + sp * Math.max(0, [...ln].length - 1);
 }
 function drawSpaced(g, ln, cx, y, sp) {
   if (!sp) { g.textAlign = 'center'; g.fillText(ln, cx, y); return; }
+  if (NATIVE_SPACING) {
+    // ブラウザに任せる（カーニングもそのまま）。最後の文字の後ろの余白分だけ戻す
+    g.letterSpacing = sp + 'px'; g.textAlign = 'center';
+    g.fillText(ln, cx + sp / 2, y);
+    g.letterSpacing = '0px';
+    return;
+  }
+  // 1文字ずつ描くときも、前の文字との組み合わせを含めた幅から位置を出す
   g.textAlign = 'left';
-  let x = cx - lineWidth(g, ln, sp) / 2;
-  for (const c of ln) { g.fillText(c, x, y); x += g.measureText(c).width + sp; }
+  const chars = [...ln], start = cx - lineWidth(g, ln, sp) / 2;
+  let prefix = '';
+  chars.forEach((c, i) => {
+    const x = start + g.measureText(prefix + c).width - g.measureText(c).width + i * sp;
+    g.fillText(c, x, y);
+    prefix += c;
+  });
 }
 // 文字の範囲（0〜1の比率）
 const measureCtx = document.createElement('canvas').getContext('2d');
@@ -911,6 +925,8 @@ const LAYOUT_SIZES = [
   { id: 'none', name: '元のまま' },
   { id: '4:5',  name: '4:5 投稿',   w: 1080, h: 1350 },
   { id: '3:4',  name: '3:4 新グリッド', w: 1080, h: 1440 },
+  { id: '5:4',  name: '5:4 横長',   w: 1080, h: 864 },
+  { id: '4:3',  name: '4:3 横長',   w: 1080, h: 810 },
   { id: '1:1',  name: '1:1',        w: 1080, h: 1080 },
   { id: '9:16', name: '9:16 ストーリー', w: 1080, h: 1920 },
 ];
@@ -958,12 +974,12 @@ function drawPostcardTitle(g, W, H) {
   let y = cy - total / 2;
   if (top) {
     g.font = fontString({ font: c.font }, small);
-    drawSpaced(g, top, W / 2, y + small / 2, small * 0.28);
+    drawSpaced(g, top, W / 2, y + small / 2, small * 0.16);
     y += small + gap;
   }
   if (place) {
     g.font = fontString({ font: c.font }, big);
-    drawSpaced(g, place, W / 2, y + big * 0.4, big * 0.04);
+    drawSpaced(g, place, W / 2, y + big * 0.4, big * 0.015);
   }
   g.restore();
 }

@@ -265,6 +265,8 @@
         <button id="geoReset">リセット</button>
       </div>
       <div id="geoList"></div>
+      <div class="adj"><label>拡大</label><input type="range" id="geoZoom" min="100" max="400" step="1" value="100"><span class="val" id="geoZoomV">100</span></div>
+      <p class="textHint">拡大したら、写真を指でドラッグして見せたい場所に動かしてね（2本指でつまんでもOK）。枠やフチはそのままだよ</p>
     </div>
     <div id="layoutPane">
       <div class="colorLbl">サイズ</div>
@@ -376,7 +378,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 3.7';
+const APP_VERSION = 'ver 3.8';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -486,7 +488,8 @@ uniform float u_hiDesat;
 uniform sampler2D u_stamp;
 uniform vec2 u_res;
 uniform float u_seed, u_anim;
-uniform float u_rot90, u_flip, u_angle, u_vpers, u_hpers;
+uniform float u_rot90, u_flip, u_angle, u_vpers, u_hpers, u_zoom;
+uniform vec2 u_pan;
 uniform float u_leak, u_leakPos, u_halation, u_dust, u_border, u_frame, u_stampOn;
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
@@ -507,6 +510,7 @@ vec2 orient(vec2 uv) {
 }
 // まっすぐ・縦横の遠近補正（端が欠けないように少しズーム）
 vec2 geo(vec2 uv, float asp) {
+  uv = 0.5 + (uv - 0.5) / max(u_zoom, 1.0) + u_pan;            // 枠の中で拡大・移動
   vec2 q = uv - 0.5;
   q.x /= 1.0 + u_vpers * 0.3 * (2.0 * uv.y - 1.0);
   q.y /= 1.0 + u_hpers * 0.3 * (2.0 * uv.x - 1.0);
@@ -677,7 +681,7 @@ class Renderer {
 
     this.u = {};
     for (const n of ['u_original','u_time','u_sTint','u_hTint','u_hiDesat','u_tex','u_stamp','u_res','u_seed','u_anim',
-                     ...FILM_KEYS.map(k => 'u_' + k), 'u_stampOn', 'u_rot90', 'u_flip', 'u_angle', 'u_vpers', 'u_hpers', ...KEYS.map(k => 'u_' + k)])
+                     ...FILM_KEYS.map(k => 'u_' + k), 'u_stampOn', 'u_rot90', 'u_flip', 'u_angle', 'u_vpers', 'u_hpers', 'u_zoom', 'u_pan', ...KEYS.map(k => 'u_' + k)])
       this.u[n] = gl.getUniformLocation(prog, n);
     gl.uniform1i(this.u.u_tex, 0);
     gl.uniform1i(this.u.u_stamp, 1);
@@ -718,6 +722,8 @@ class Renderer {
     gl.uniform1f(this.u.u_angle, (g.angle || 0) * Math.PI / 180);
     gl.uniform1f(this.u.u_vpers, g.v || 0);
     gl.uniform1f(this.u.u_hpers, g.h || 0);
+    gl.uniform1f(this.u.u_zoom, g.zoom || 1);
+    gl.uniform2f(this.u.u_pan, g.px || 0, g.py || 0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 }
@@ -741,7 +747,7 @@ const state = {
   showOriginal: false,
   exporting: false,
   texts: [],           // { text, font, size, color, alpha, x, y }
-  geo: { angle: 0, v: 0, h: 0, rot: 0, flip: false },
+  geo: { angle: 0, v: 0, h: 0, rot: 0, flip: false, zoom: 1, px: 0, py: 0 },
   layout: { size: 'none', style: 'simple', pad: 0.06, bg: '#ffffff',
             cx: 0.5, cy: 0.5, zoom: 1,   // 写真いっぱい：枠の真ん中に来る写真の位置と拡大率
             cap: { ...CAP_DEFAULT } },
@@ -1224,6 +1230,7 @@ async function openBatchItem(i) {
   if (it.geo) {
     Object.assign(state.geo, it.geo);
     for (const r of $('geoList').children) r._set(r._key === 'angle' ? state.geo.angle : Math.round(state.geo[r._key] * 100));
+    setGeoZoom(state.geo.zoom || 1);
   } else resetGeo(true);
   Object.assign(state.layout, it.view || { cx: 0.5, cy: 0.5, zoom: 1 });
   if (it.date) { state.film.date = it.date; $('stampDate').value = it.date; } else setStampDate(new Date(it.file.lastModified || Date.now()));
@@ -1666,12 +1673,21 @@ function buildGeo() {
     row._key = a.key;
     $('geoList').appendChild(row);
   }
+  $('geoZoom').oninput = e => setGeoZoom(e.target.value / 100);
   $('rotBtn').onclick = () => { state.geo.rot = (state.geo.rot + 1) % 4; requestRender(); };
   $('flipBtn').onclick = () => { state.geo.flip = !state.geo.flip; requestRender(); };
   $('geoReset').onclick = () => resetGeo();
 }
+function setGeoZoom(z) {
+  const g = state.geo;
+  g.zoom = Math.min(4, Math.max(1, z));
+  const lim = 0.5 - 0.5 / g.zoom;
+  g.px = Math.min(lim, Math.max(-lim, g.px)); g.py = Math.min(lim, Math.max(-lim, g.py));
+  const v = Math.round(g.zoom * 100); $('geoZoom').value = v; $('geoZoomV').textContent = v;
+  requestRender();
+}
 function resetGeo(silent) {
-  state.geo.rot = 0; state.geo.flip = false;
+  state.geo.rot = 0; state.geo.flip = false; state.geo.px = 0; state.geo.py = 0; setGeoZoom(1);
   for (const r of $('geoList').children) r._set(0);
   if (!silent) requestRender();
 }
@@ -2044,10 +2060,31 @@ let dragOff = [0, 0];
 // 写真いっぱい／Postcards from：ドラッグで位置、2本指で拡大
 const panPts = new Map();
 let pinch = null;
-function panning() { return state.tab === 'layout' && layoutOn() && state.layout.style !== 'simple'; }
+function panning() { return state.tab === 'geo' || (state.tab === 'layout' && layoutOn() && state.layout.style !== 'simple'); }
+// 画面に見えている写真の大きさ（px）
+function photoScreenRect() {
+  if (layoutOn() && state.layoutRect) {
+    const b = $('layoutView').getBoundingClientRect(), k = b.width / $('layoutView').width, q = state.layoutRect;
+    return { w: q.w * k, h: q.h * k };
+  }
+  const b = view.getBoundingClientRect(); return { w: b.width, h: b.height };
+}
 function panMove(e) {
   const prev = panPts.get(e.pointerId); if (!prev) return;
   panPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (state.tab === 'geo') {
+    const g = state.geo;
+    if (panPts.size >= 2 && pinch) {
+      const [a, b] = [...panPts.values()];
+      setGeoZoom(pinch.zoom * Math.hypot(a.x - b.x, a.y - b.y) / pinch.dist);
+    } else {
+      const r = photoScreenRect(), lim = 0.5 - 0.5 / g.zoom;
+      g.px = Math.min(lim, Math.max(-lim, g.px - (e.clientX - prev.x) / (r.w * g.zoom)));
+      g.py = Math.min(lim, Math.max(-lim, g.py + (e.clientY - prev.y) / (r.h * g.zoom)));
+      requestRender();
+    }
+    return;
+  }
   const L = state.layout, lv = $('layoutView'), k = lv.width / lv.getBoundingClientRect().width, q = state.layoutRect;
   if (panPts.size >= 2 && pinch) {
     const [a, b] = [...panPts.values()];
@@ -2070,7 +2107,7 @@ function onSurfaceDown(e) {
   if (panning()) {
     surf.setPointerCapture(e.pointerId);
     panPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (panPts.size === 2) { const [a, b] = [...panPts.values()]; pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, zoom: state.layout.zoom || 1 }; }
+    if (panPts.size === 2) { const [a, b] = [...panPts.values()]; pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, zoom: state.tab === 'geo' ? state.geo.zoom : (state.layout.zoom || 1) }; }
     return;
   }
   if (state.tab === 'text' && state.texts.length) {

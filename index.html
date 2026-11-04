@@ -14,7 +14,7 @@
 <title>R's Little Film</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=BIZ+UDGothic&family=Shippori+Mincho:wght@400;500&family=Klee+One&family=Zen+Kaku+Gothic+New:wght@400;500&family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400;1,500&family=Arimo:wght@400;500&family=Bodoni+Moda:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=BIZ+UDGothic&family=Shippori+Mincho:wght@400;500&family=Klee+One&family=Zen+Kaku+Gothic+New:wght@400;500&family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400;1,500&family=Arimo:wght@400;500&family=Bodoni+Moda:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #111; --panel: #1a1a1a; --line: #2a2a2a; --text: #eee; --sub: #888; --accent: #f2f2f2;
@@ -272,6 +272,10 @@
           <input type="text" id="capPlace" maxlength="20" class="capIn">
           <div class="chips" id="capFonts" style="padding-top:10px"></div>
           <div class="adj"><label>大きさ</label><input type="range" id="capSize" min="5" max="20" step="0.25" value="11"><span class="val" id="capSizeV">11</span></div>
+          <div class="colorLbl">上の小さい文字の太さ</div>
+          <div class="chips" id="capWeights"></div>
+          <div class="adj"><label>字間（上）</label><input type="range" id="capTopSp" min="0" max="60" step="1" value="22"><span class="val" id="capTopSpV">22</span></div>
+          <div class="adj"><label>字間（地名）</label><input type="range" id="capPlaceSp" min="0" max="40" step="1" value="7"><span class="val" id="capPlaceSpV">7</span></div>
           <div class="adj"><label>文字の高さ</label><input type="range" id="capY" min="10" max="90" step="1" value="50"><span class="val" id="capYV">50</span></div>
           <div class="adj"><label>影</label><input type="range" id="capShadow" min="0" max="100" step="1" value="35"><span class="val" id="capShadowV">35</span></div>
           <div class="chips" id="capColors"></div>
@@ -352,7 +356,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 2.9';
+const APP_VERSION = 'ver 3.0';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -393,7 +397,8 @@ const BUILTIN_PRESETS = [
 
 const STORE_KEY = 'colorstudio.customPresets.v1';
 // 「POSTCARDS FROM / PARIS」タイトルの初期設定
-const CAP_DEFAULT = { top: 'POSTCARDS FROM', place: 'PARIS', font: 'didone', color: '#ffffff', size: 11, y: 0.5, shadow: 0.35 };
+const CAP_DEFAULT = { top: 'POSTCARDS FROM', place: 'PARIS', font: 'didone', color: '#ffffff', size: 11, y: 0.5, shadow: 0.35,
+                      topWeight: 600, topSpace: 22, placeSpace: 7 };
 
 /* フィルムカメラ風エフェクト */
 /* 文字のフォント（シンプル × レトロ） */
@@ -767,7 +772,7 @@ function ensureStamp(r, w, h) {
 
 function fontString(t, px) {
   const ft = FONTS.find(x => x.id === t.font) || FONTS[0];
-  return `${ft.style || 'normal'} ${ft.weight || 400} ${px}px ${ft.css}`;
+  return `${ft.style || 'normal'} ${t.weight || ft.weight || 400} ${px}px ${ft.css}`;
 }
 function drawText(g, t, w, h) {
   const px = Math.max(4, Math.round(Math.min(w, h) * t.size / 100));
@@ -960,9 +965,34 @@ function composeLayout(g, src, W, H) {
 }
 
 // 写真の上に「POSTCARDS FROM（小）」＋「地名（大）」をメリハリつけて描く
+// 文字の「形」を見て、すき間が均等に見えるように並べる（RIS が詰まって見える問題の対策）
+const OPEN_RIGHT = new Set([...'FLPTVWYK7']), OPEN_LEFT = new Set([...'AJTVWYX']);
+function drawOptical(g, text, cx, y, gap) {
+  g.textAlign = 'left';
+  const items = [...text].map(ch => {
+    if (ch === ' ') return { ch, sp: true, w: g.measureText(' ').width + gap * 1.2 };
+    const m = g.measureText(ch);
+    return { ch, l: m.actualBoundingBoxLeft, w: m.actualBoundingBoxLeft + m.actualBoundingBoxRight };
+  });
+  // 斜めや片側が空いた文字（A・T・V・L など）のとなりは、少しだけ詰めて見た目をそろえる
+  const gapAt = i => {
+    const a = items[i - 1], b = items[i];
+    if (!i || a.sp || b.sp) return 0;
+    const ka = OPEN_RIGHT.has(a.ch.toUpperCase()) ? 0.4 : 0, kb = OPEN_LEFT.has(b.ch.toUpperCase()) ? 0.4 : 0;
+    return gap * Math.max(0.25, 1 - ka - kb);
+  };
+  const total = items.reduce((acc, it, i) => acc + it.w + gapAt(i), 0);
+  let x = cx - total / 2;
+  items.forEach((it, i) => {
+    x += gapAt(i);
+    if (!it.sp) g.fillText(it.ch, x + it.l, y);
+    x += it.w;
+  });
+}
+
 function drawPostcardTitle(g, W, H) {
   const c = { ...CAP_DEFAULT, ...state.layout.cap };
-  const big = W * c.size / 100, small = big * 0.3;
+  const big = W * c.size / 100, small = big * 0.34;
   const cy = H * c.y;
   g.save();
   g.fillStyle = c.color;
@@ -973,13 +1003,13 @@ function drawPostcardTitle(g, W, H) {
   const total = (top ? small : 0) + gap + (place ? big * 0.8 : 0);
   let y = cy - total / 2;
   if (top) {
-    g.font = fontString({ font: c.font }, small);
-    drawSpaced(g, top, W / 2, y + small / 2, small * 0.16);
+    g.font = fontString({ font: c.font, weight: c.topWeight }, small);
+    drawOptical(g, top, W / 2, y + small / 2, small * c.topSpace / 100 + small * 0.08);
     y += small + gap;
   }
   if (place) {
     g.font = fontString({ font: c.font }, big);
-    drawSpaced(g, place, W / 2, y + big * 0.4, big * 0.015);
+    drawOptical(g, place, W / 2, y + big * 0.4, big * c.placeSpace / 100 + big * 0.04);
   }
   g.restore();
 }
@@ -1445,7 +1475,11 @@ function setLayout(patch) {
   view.style.display = state.src && !on ? 'block' : 'none';
   $('layoutView').style.display = state.src && on ? 'block' : 'none';
   refreshLayoutUI(); requestRender();
-  if (on) { const c = state.layout.cap; document.fonts?.load(fontString({ font: c.font }, 40), (c.top || '') + (c.place || '')).then(() => requestRender()).catch(() => {}); }
+  if (on) {
+    const c = { ...CAP_DEFAULT, ...state.layout.cap };
+    Promise.all([document.fonts?.load(fontString({ font: c.font }, 40), c.place || 'A'), document.fonts?.load(fontString({ font: c.font, weight: c.topWeight }, 40), c.top || 'A')])
+      .then(() => requestRender()).catch(() => {});
+  }
 }
 function refreshLayoutUI() {
   const L = state.layout;
@@ -1467,6 +1501,11 @@ function refreshLayoutUI() {
   if (document.activeElement !== $('capPlace')) $('capPlace').value = L.cap.place;
   $('capY').value = Math.round(L.cap.y * 100); $('capYV').textContent = Math.round(L.cap.y * 100);
   $('capShadow').value = Math.round(L.cap.shadow * 100); $('capShadowV').textContent = Math.round(L.cap.shadow * 100);
+  $('capTopSp').value = L.cap.topSpace; $('capTopSpV').textContent = L.cap.topSpace;
+  $('capPlaceSp').value = L.cap.placeSpace; $('capPlaceSpV').textContent = L.cap.placeSpace;
+  const cw = $('capWeights'); cw.innerHTML = '';
+  for (const [nm, wt] of [['細め', 400], ['ふつう', 500], ['太め', 600], ['もっと太く', 700]])
+    cw.appendChild(chip(nm, L.cap.topWeight === wt, () => { L.cap.topWeight = wt; setLayout({}); }));
   const cf = $('capFonts'); cf.innerHTML = '';
   for (const f of FONTS) {
     const b = chip(f.name, f.id === L.cap.font, () => { L.cap.font = f.id; setLayout({}); }, 'fontChip');
@@ -1485,6 +1524,8 @@ function buildLayoutUI() {
   $('capTop').oninput = e => { state.layout.cap.top = e.target.value; setLayout({}); };
   $('capPlace').oninput = e => { state.layout.cap.place = e.target.value; setLayout({}); };
   $('capY').oninput = e => { state.layout.cap.y = e.target.value / 100; $('capYV').textContent = e.target.value; requestRender(); };
+  $('capTopSp').oninput = e => { state.layout.cap.topSpace = +e.target.value; $('capTopSpV').textContent = e.target.value; requestRender(); };
+  $('capPlaceSp').oninput = e => { state.layout.cap.placeSpace = +e.target.value; $('capPlaceSpV').textContent = e.target.value; requestRender(); };
   $('capShadow').oninput = e => { state.layout.cap.shadow = e.target.value / 100; $('capShadowV').textContent = e.target.value; requestRender(); };
   $('zoomR').oninput = e => { state.layout.zoom = e.target.value / 100; $('zoomV').textContent = e.target.value; requestRender(); };
   $('capSize').oninput = e => { state.layout.cap.size = +e.target.value; $('capSizeV').textContent = e.target.value; requestRender(); };

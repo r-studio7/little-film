@@ -304,6 +304,7 @@
     </div>
     <div id="favPane">
       <button id="favAdd">★ 今の加工をお気に入りに保存</button>
+      <button id="favExport" class="textHint" style="display:block;margin:10px auto 0;text-decoration:underline">お気に入りをファイルに書き出す（Claudeにまとめて加工してもらう用）</button>
       <div id="favList"></div>
     </div>
     <div id="textPane">
@@ -375,7 +376,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 3.5';
+const APP_VERSION = 'ver 3.6';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -1448,6 +1449,61 @@ function applyFavorite(f) {
   requestRender();
   toast(`「${f.name}」を適用したよ`);
 }
+
+$('favExport').onclick = () => {
+  if (!favorites.length) return alert('お気に入りがまだないよ');
+  const data = favorites.map(({ thumb, ...rest }) => rest);   // サムネイルは入れない（軽くするため）
+  const blob = new Blob([JSON.stringify({ app: 'littlefilm', version: 1, favorites: data }, null, 2)], { type: 'application/json' });
+  const file = new File([blob], 'littlefilm-favorites.json', { type: 'application/json' });
+  saveBlob(file, file.name, 'file');
+};
+
+/* =========================================================
+   Claude などから操作するための入口
+   LittleFilm.applyRecipe({...}) で設定をまとめて反映、LittleFilm.exportJpeg() で今の画像をJPEGで受け取る
+   ========================================================= */
+function applyRecipe(r = {}) {
+  if (r.favoriteData) applyFavorite(r.favoriteData);
+  if (r.favorite) {
+    const f = favorites.find(x => x.name === r.favorite);
+    if (!f) throw new Error(`お気に入り「${r.favorite}」が見つからないよ`);
+    applyFavorite(f);
+  }
+  if (r.preset) {
+    const p = allPresets().find(x => x.id === r.preset || x.name.toLowerCase() === String(r.preset).toLowerCase());
+    if (!p) throw new Error(`プリセット「${r.preset}」が見つからないよ`);
+    selectPreset(p.id);
+  }
+  if (r.strength != null) { state.strength = r.strength > 1 ? r.strength / 100 : r.strength; updateStrengthUI(); }
+  if (r.adjust) for (const row of $('adjList').children) if (row._key in r.adjust) row._set(Math.round(r.adjust[row._key] * 100));
+  if (r.film) {
+    for (const row of $('filmList').children) if (row._key in r.film) row._set(Math.round(r.film[row._key] * 100), true);
+    if (r.film.leakPos != null) state.film.leakPos = r.film.leakPos;
+    if (r.film.stamp != null) setStamp(!!r.film.stamp);
+  }
+  if (r.geo) Object.assign(state.geo, r.geo);
+  if (r.size) setLayout({ size: r.size });
+  if (r.style) setLayout({ style: r.style });
+  if (r.bg) setLayout({ bg: r.bg });
+  if (r.title) {
+    const { template, ...rest } = r.title;
+    if (template) applyTitleTemplate(TITLE_TEMPLATES.find(t => t.id === template) || TITLE_TEMPLATES[0]);
+    Object.assign(state.layout.cap, rest);
+    if (r.title.place && template) state.layout.cap.place = (TITLE_TEMPLATES.find(t => t.id === template) || TITLE_TEMPLATES[0]).caseFn(r.title.place);
+    setLayout({ style: 'postcard' });
+  }
+  if (r.texts) { state.texts = JSON.parse(JSON.stringify(r.texts)); state.selText = state.texts.length - 1; state.texts.forEach(loadFont); refreshTextUI(); }
+  requestRender();
+}
+async function exportJpeg() {
+  await document.fonts?.ready;
+  drawMain();
+  const blob = await prepareImage();
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+window.LittleFilm = { applyRecipe, exportJpeg, presets: () => allPresets().map(p => ({ id: p.id, name: p.name })) };
 
 function buildFavList() {
   const list = $('favList');

@@ -123,7 +123,17 @@
 
   input[type=range] { -webkit-appearance: none; appearance: none; height: 24px; background: transparent; }
   input[type=range]::-webkit-slider-runnable-track { height: 2px; background: #444; }
-  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #fff; margin-top: -8px; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%; background: #fff; margin-top: -10px; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  .rangeWrap { display: block; touch-action: pan-y; padding: 10px 0; margin: -10px 0; cursor: pointer; }
+  .rangeWrap input { width: 100%; display: block; }
+  #strengthRow .rangeWrap, #videoBar .rangeWrap { flex: 1; }
+  #geoPane { display: none; max-height: 34vh; overflow-y: auto; padding: 6px 16px 8px; }
+  .geoBtns { display: flex; gap: 8px; padding-bottom: 8px; }
+  .geoBtns button { flex: 1; font-size: 12px; padding: 9px 0; border-radius: 10px; border: 1px solid var(--line); color: #ddd; }
+  #grid { position: absolute; display: none; pointer-events: none;
+          background-image: linear-gradient(90deg, transparent calc(33.33% - .5px), rgba(255,255,255,.55) calc(33.33% - .5px), rgba(255,255,255,.55) calc(33.33% + .5px), transparent calc(33.33% + .5px), transparent calc(66.66% - .5px), rgba(255,255,255,.55) calc(66.66% - .5px), rgba(255,255,255,.55) calc(66.66% + .5px), transparent calc(66.66% + .5px)),
+                            linear-gradient(0deg, transparent calc(33.33% - .5px), rgba(255,255,255,.55) calc(33.33% - .5px), rgba(255,255,255,.55) calc(33.33% + .5px), transparent calc(33.33% + .5px), transparent calc(66.66% - .5px), rgba(255,255,255,.55) calc(66.66% - .5px), rgba(255,255,255,.55) calc(66.66% + .5px), transparent calc(66.66% + .5px)); }
+  .colorLbl { font-size: 12px; color: #ccc; margin: 6px 0 4px; }
   input[type=range]::-moz-range-track { height: 2px; background: #444; }
   input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #fff; border: 0; }
 
@@ -158,6 +168,7 @@
     </div>
     <canvas id="view"></canvas>
     <div id="origBadge">オリジナル</div>
+    <div id="grid"></div>
   </div>
 
   <div id="videoBar">
@@ -171,6 +182,7 @@
       <button class="tab on" data-tab="preset">プリセット</button>
       <button class="tab" data-tab="adjust">調整</button>
       <button class="tab" data-tab="film">フィルム</button>
+      <button class="tab" data-tab="geo">角度</button>
       <button class="tab" data-tab="text">文字</button>
       <button class="tab" data-tab="fav">★</button>
     </div>
@@ -205,6 +217,14 @@
       </div>
       <div class="ver" style="font-size:10px;color:#555;text-align:right;padding-top:8px"></div>
     </div>
+    <div id="geoPane">
+      <div class="geoBtns">
+        <button id="rotBtn">↻ 90°回転</button>
+        <button id="flipBtn">⇋ 左右反転</button>
+        <button id="geoReset">リセット</button>
+      </div>
+      <div id="geoList"></div>
+    </div>
     <div id="favPane">
       <button id="favAdd">★ 今の加工をお気に入りに保存</button>
       <div id="favList"></div>
@@ -217,6 +237,7 @@
         <div class="adj"><label>大きさ</label><input type="range" id="textSize" min="2" max="20" step="0.5" value="6"><span class="val" id="textSizeVal">6</span></div>
         <div class="adj"><label>字間</label><input type="range" id="textSpace" min="0" max="40" step="1" value="0"><span class="val" id="textSpaceVal">0</span></div>
         <div class="adj"><label>濃さ</label><input type="range" id="textAlpha" min="20" max="100" step="1" value="100"><span class="val" id="textAlphaVal">100</span></div>
+        <div class="colorLbl">色</div>
         <div class="chips" id="colorChips"></div>
         <div id="picker">
           <div class="pickHead"><div id="pickSwatch"></div><div><div style="font-size:11px;color:#888">選んでる色</div><div id="pickHex"></div></div></div>
@@ -275,7 +296,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 2.1';
+const APP_VERSION = 'ver 2.2';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -373,6 +394,7 @@ uniform float u_hiDesat;
 uniform sampler2D u_stamp;
 uniform vec2 u_res;
 uniform float u_seed, u_anim;
+uniform float u_rot90, u_flip, u_angle, u_vpers, u_hpers;
 uniform float u_leak, u_leakPos, u_halation, u_dust, u_border, u_frame, u_stampOn;
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
@@ -383,8 +405,30 @@ float vnoise(vec2 p) {
   return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
 }
 
+// 向き（90°回転・左右反転）：表示上の座標 → 元の写真の座標
+vec2 orient(vec2 uv) {
+  if (u_flip > 0.5) uv.x = 1.0 - uv.x;
+  if (u_rot90 > 2.5) return vec2(uv.y, 1.0 - uv.x);
+  if (u_rot90 > 1.5) return vec2(1.0 - uv.x, 1.0 - uv.y);
+  if (u_rot90 > 0.5) return vec2(1.0 - uv.y, uv.x);
+  return uv;
+}
+// まっすぐ・縦横の遠近補正（端が欠けないように少しズーム）
+vec2 geo(vec2 uv, float asp) {
+  vec2 q = uv - 0.5;
+  q.x /= 1.0 + u_vpers * 0.3 * (2.0 * uv.y - 1.0);
+  q.y /= 1.0 + u_hpers * 0.3 * (2.0 * uv.x - 1.0);
+  q.x *= 1.0 - 0.3 * abs(u_vpers);
+  q.y *= 1.0 - 0.3 * abs(u_hpers);
+  float cs = cos(u_angle), sn = sin(u_angle), sa = abs(sn);
+  vec2 p = q * vec2(asp, 1.0);
+  p = vec2(cs * p.x - sn * p.y, sn * p.x + cs * p.y) / vec2(asp, 1.0);
+  p /= max(cs + sa / asp, cs + sa * asp);
+  return orient(p + 0.5);
+}
+
 void main() {
-  if (u_original > 0.5) { gl_FragColor = vec4(texture2D(u_tex, v_uv).rgb, 1.0); return; }
+  if (u_original > 0.5) { gl_FragColor = vec4(texture2D(u_tex, orient(v_uv)).rgb, 1.0); return; }
 
   // フチ（インスタント写真風：下だけ太い）
   float bpx = u_border * 0.07 * min(u_res.x, u_res.y);
@@ -397,7 +441,9 @@ void main() {
     return;
   }
 
-  vec3 c = texture2D(u_tex, uv).rgb;
+  vec2 resIn0 = u_res * (1.0 - mLo - mHi);
+  vec2 suv = geo(uv, resIn0.x / resIn0.y);                     // 元写真のどこを読むか
+  vec3 c = texture2D(u_tex, suv).rgb;
 
   // ハレーション用：明るい部分のまわりの光を集める
   float halo = 0.0;
@@ -406,8 +452,8 @@ void main() {
     for (int i = 0; i < 12; i++) {
       float a = float(i) * 0.5236;
       vec2 o = vec2(cos(a), sin(a));
-      halo += max(luma(texture2D(u_tex, uv + o * rr).rgb) - 0.72, 0.0);
-      halo += max(luma(texture2D(u_tex, uv + o * rr * 2.2).rgb) - 0.72, 0.0) * 0.7;
+      halo += max(luma(texture2D(u_tex, suv + o * rr).rgb) - 0.72, 0.0);
+      halo += max(luma(texture2D(u_tex, suv + o * rr * 2.2).rgb) - 0.72, 0.0) * 0.7;
     }
     halo = clamp(halo / 24.0 * 4.0, 0.0, 1.0);
   }
@@ -539,7 +585,7 @@ class Renderer {
 
     this.u = {};
     for (const n of ['u_original','u_time','u_sTint','u_hTint','u_hiDesat','u_tex','u_stamp','u_res','u_seed','u_anim',
-                     ...FILM_KEYS.map(k => 'u_' + k), 'u_stampOn', ...KEYS.map(k => 'u_' + k)])
+                     ...FILM_KEYS.map(k => 'u_' + k), 'u_stampOn', 'u_rot90', 'u_flip', 'u_angle', 'u_vpers', 'u_hpers', ...KEYS.map(k => 'u_' + k)])
       this.u[n] = gl.getUniformLocation(prog, n);
     gl.uniform1i(this.u.u_tex, 0);
     gl.uniform1i(this.u.u_stamp, 1);
@@ -574,6 +620,12 @@ class Renderer {
     gl.uniform2f(this.u.u_res, w, h);
     gl.uniform1f(this.u.u_anim, anim);
     gl.uniform1f(this.u.u_seed, seed);
+    const g = params.geo || {};
+    gl.uniform1f(this.u.u_rot90, g.rot || 0);
+    gl.uniform1f(this.u.u_flip, g.flip ? 1 : 0);
+    gl.uniform1f(this.u.u_angle, (g.angle || 0) * Math.PI / 180);
+    gl.uniform1f(this.u.u_vpers, g.v || 0);
+    gl.uniform1f(this.u.u_hpers, g.h || 0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 }
@@ -597,6 +649,7 @@ const state = {
   showOriginal: false,
   exporting: false,
   texts: [],           // { text, font, size, color, alpha, x, y }
+  geo: { angle: 0, v: 0, h: 0, rot: 0, flip: false },
   selText: -1,
   tab: 'preset',
   film: { leak: 0, leakPos: 0, halation: 0, dust: 0, grain: 0, border: 0, frame: 0, stamp: false, date: '' },
@@ -620,6 +673,7 @@ function mainParams() {
   const p = effectiveParams();
   p.grain += state.film.grain;
   p.film = state.film;
+  p.geo = state.geo;
   p.overlayOn = state.film.stamp || state.texts.some(t => t.text.trim());
   return p;
 }
@@ -676,7 +730,8 @@ function drawSpaced(g, ln, cx, y, sp) {
 // 文字の範囲（0〜1の比率）
 const measureCtx = document.createElement('canvas').getContext('2d');
 function textBox(t) {
-  const W = 1000, H = 1000 * (state.h / state.w || 1);
+  const [ow, oh] = outWH();
+  const W = 1000, H = 1000 * (oh / ow || 1);
   const px = Math.min(W, H) * t.size / 100, sp = px * (t.space || 0) / 100;
   measureCtx.font = fontString(t, px);
   const lines = t.text.split('\n');
@@ -712,6 +767,9 @@ function renderTo(r, w, h, opts = {}) {
 }
 function renderMain(w, h, opts = {}) { renderTo(main, w, h, opts); }
 
+// 90°回転したときは縦横が入れ替わる
+function outWH() { return state.geo.rot % 2 ? [state.h, state.w] : [state.w, state.h]; }
+
 function fitSize(w, h, maxEdge) {
   const s = Math.min(1, maxEdge / Math.max(w, h));
   return [Math.round(w * s), Math.round(h * s)];
@@ -739,7 +797,7 @@ function prepareImage() {
   return new Promise(resolve => {
     if (state.type !== 'image') return resolve(null);
     const v = editVersion, r = getExportRenderer();
-    renderTo(r, state.w, state.h, { time: 0.5 });
+    renderTo(r, ...outWH(), { time: 0.5 });
     r.canvas.toBlob(blob => {
       if (v === editVersion) ready = { version: v, blob };
       resolve(blob);
@@ -747,9 +805,16 @@ function prepareImage() {
   });
 }
 
+function placeGrid() {
+  const gEl = $('grid');
+  if (state.tab !== 'geo' || !state.src) { gEl.style.display = 'none'; return; }
+  const r = view.getBoundingClientRect(), sr = $('stage').getBoundingClientRect();
+  Object.assign(gEl.style, { display: 'block', left: (r.left - sr.left) + 'px', top: (r.top - sr.top) + 'px', width: r.width + 'px', height: r.height + 'px' });
+}
 function drawMain() {
+  requestAnimationFrame(placeGrid);
   if (!state.src) return;
-  const [w, h] = state.exporting ? exportSize() : fitSize(state.w, state.h, state.type === 'video' ? 1280 : 1600);
+  const [w, h] = state.exporting ? exportSize() : fitSize(...outWH(), state.type === 'video' ? 1280 : 1600);
   if (state.type === 'video') {
     if (state.src.readyState < 2) return;
     main.upload(state.src);
@@ -782,6 +847,7 @@ $('file').onchange = e => {
   const url = URL.createObjectURL(f);
   ready = null;
   setStampDate(new Date(f.lastModified || Date.now()));
+  resetGeo(true);
   if (f.type.startsWith('video/')) loadVideo(url); else loadImage(url);
 };
 
@@ -930,7 +996,9 @@ for (const t of document.querySelectorAll('.tab')) {
     $('filmPane').style.display = t.dataset.tab === 'film' ? 'block' : 'none';
     $('textPane').style.display = t.dataset.tab === 'text' ? 'block' : 'none';
     $('favPane').style.display = t.dataset.tab === 'fav' ? 'block' : 'none';
+    $('geoPane').style.display = t.dataset.tab === 'geo' ? 'block' : 'none';
     state.tab = t.dataset.tab;
+    placeGrid();
   };
 }
 
@@ -1100,6 +1168,82 @@ function setStamp(on) {
 }
 
 /* =========================================================
+   7.55 角度タブ（まっすぐ・遠近補正・回転・反転）
+   ========================================================= */
+const GEO_SLIDERS = [
+  { key: 'angle', label: 'まっすぐ', min: -45, max: 45, step: 0.5, fmt: v => (v > 0 ? '+' : '') + v + '°', scale: 1 },
+  { key: 'v',     label: '縦の傾き', min: -100, max: 100, step: 1, fmt: v => v, scale: 100 },
+  { key: 'h',     label: '横の傾き', min: -100, max: 100, step: 1, fmt: v => v, scale: 100 },
+];
+function buildGeo() {
+  for (const a of GEO_SLIDERS) {
+    const row = document.createElement('div');
+    row.className = 'adj';
+    row.innerHTML = `<label>${a.label}</label><input type="range" min="${a.min}" max="${a.max}" step="${a.step}" value="0"><span class="val">0</span>`;
+    const input = row.querySelector('input'), val = row.querySelector('.val');
+    row._set = v => {
+      state.geo[a.key] = v / a.scale;
+      input.value = v; val.textContent = a.fmt(+v);
+      row.classList.toggle('changed', +v !== 0);
+      requestRender();
+    };
+    input.oninput = () => row._set(+input.value);
+    input.ondblclick = () => row._set(0);
+    row.querySelector('label').onclick = () => row._set(0);
+    $('geoList').appendChild(row);
+  }
+  $('rotBtn').onclick = () => { state.geo.rot = (state.geo.rot + 1) % 4; requestRender(); };
+  $('flipBtn').onclick = () => { state.geo.flip = !state.geo.flip; requestRender(); };
+  $('geoReset').onclick = () => resetGeo();
+}
+function resetGeo(silent) {
+  state.geo.rot = 0; state.geo.flip = false;
+  for (const r of $('geoList').children) r._set(0);
+  if (!silent) requestRender();
+}
+
+/* スライダーを触りやすくする：バーのどこをタップしてもその位置に動く／横になぞると追従
+   （縦スクロールはそのままできる） */
+function enhanceRange(inp) {
+  if (inp._enh) return;
+  inp._enh = true;
+  const wrap = document.createElement('span');
+  wrap.className = 'rangeWrap';
+  inp.parentNode.insertBefore(wrap, inp);
+  wrap.appendChild(inp);
+  inp.style.pointerEvents = 'none';
+  let st = null, lastTap = 0;
+  const setFromX = x => {
+    const r = inp.getBoundingClientRect();
+    if (r.width < 30) return;
+    const th = 22, min = +(inp.min || 0), max = +(inp.max || 100), step = +(inp.step || 1);
+    const k = Math.min(1, Math.max(0, (x - r.left - th / 2) / (r.width - th)));
+    let v = min + k * (max - min);
+    v = Math.round((v - min) / step) * step + min;
+    v = +v.toFixed(3);
+    if (+inp.value !== v) { inp.value = v; inp.dispatchEvent(new Event('input', { bubbles: true })); }
+  };
+  wrap.addEventListener('pointerdown', e => { st = { x: e.clientX, y: e.clientY, drag: false, id: e.pointerId }; });
+  wrap.addEventListener('pointermove', e => {
+    if (!st) return;
+    const dx = e.clientX - st.x, dy = e.clientY - st.y;
+    if (!st.drag && Math.abs(dx) > 3 && Math.abs(dx) > Math.abs(dy)) { st.drag = true; try { wrap.setPointerCapture(st.id); } catch {} }
+    if (st.drag) setFromX(e.clientX);
+  });
+  wrap.addEventListener('pointerup', e => {
+    if (!st) return;
+    if (!st.drag) {
+      const now = Date.now();
+      if (now - lastTap < 300) { inp.dispatchEvent(new Event('dblclick')); lastTap = 0; }
+      else { setFromX(e.clientX); lastTap = now; }
+    }
+    inp.dispatchEvent(new Event('change', { bubbles: true }));
+    st = null;
+  });
+  wrap.addEventListener('pointercancel', () => { st = null; });
+}
+
+/* =========================================================
    7.6 文字タブ
    ========================================================= */
 function loadFont(t) {
@@ -1138,7 +1282,7 @@ function buildTextUI() {
       setTimeout(() => $('picker').scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50);
     }
   };
-  cc.appendChild(pb);
+  cc.insertBefore(pb, cc.firstChild);
   for (const id of ['pickH', 'pickS', 'pickL']) $(id).oninput = onPick;
   $('textSpace').oninput = e => { $('textSpaceVal').textContent = e.target.value; updateText({ space: +e.target.value }); };
   $('textInput').oninput = e => updateText({ text: e.target.value });
@@ -1285,7 +1429,7 @@ $('seek').onchange = () => { seeking = false; };
 /* =========================================================
    10. 書き出し
    ========================================================= */
-let exportSize = () => fitSize(state.w, state.h, 1920);
+let exportSize = () => fitSize(...outWH(), 1920);
 let resultBlob = null, resultName = '';
 
 $('exportBtn').onclick = () => {
@@ -1450,6 +1594,8 @@ buildAdjust();
 buildFilm();
 buildTextUI();
 buildFavList();
+buildGeo();
+document.querySelectorAll('input[type=range]').forEach(enhanceRange);
 updateStrengthUI();
 </script>
 </body>

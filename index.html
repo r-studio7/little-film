@@ -93,6 +93,10 @@
   #picker { display: none; background: #111; border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-top: 4px; }
   #picker.show { display: block; }
   .pickHead { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+  #fieldWrap { position: relative; touch-action: none; }
+  #pickField { width: 100%; height: 150px; display: block; border-radius: 8px; cursor: crosshair; }
+  #pickMark { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; border: 3px solid #fff;
+              box-shadow: 0 0 0 1px rgba(0,0,0,.6), 0 1px 4px rgba(0,0,0,.5); pointer-events: none; }
   #pickSwatch { width: 44px; height: 44px; border-radius: 10px; border: 1px solid #555; }
   #pickHex { font-size: 13px; color: #ddd; font-variant-numeric: tabular-nums; letter-spacing: .05em; }
   .pickRow { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 10px; padding: 6px 0; font-size: 12px; color: #ccc; }
@@ -241,9 +245,10 @@
         <div class="chips" id="colorChips"></div>
         <div id="picker">
           <div class="pickHead"><div id="pickSwatch"></div><div><div style="font-size:11px;color:#888">選んでる色</div><div id="pickHex"></div></div></div>
-          <div class="pickRow"><span>色み</span><input type="range" class="grad" id="pickH" min="0" max="360" value="30"></div>
-          <div class="pickRow"><span>鮮やかさ</span><input type="range" class="grad" id="pickS" min="0" max="100" value="40"></div>
-          <div class="pickRow"><span>明るさ</span><input type="range" class="grad" id="pickL" min="0" max="100" value="60"></div>
+          <div id="fieldWrap"><canvas id="pickField"></canvas><div id="pickMark"></div></div>
+          <p class="textHint" style="margin:6px 0 2px">↑ 色の上をタップ・なぞって選んでね（横：色み／縦：明るさ）</p>
+          <div class="pickRow"><span>鮮やかさ</span><input type="range" class="grad" id="pickS" min="0" max="100" value="60"></div>
+          <input type="hidden" id="pickH" value="30"><input type="hidden" id="pickL" value="50">
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center">
           <p class="textHint">文字をつかんでドラッグすると動くよ</p>
@@ -296,7 +301,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 2.2';
+const APP_VERSION = 'ver 2.3';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -1277,13 +1282,30 @@ function buildTextUI() {
     $('picker').classList.toggle('show', open);
     if (open) {
       const t = state.texts[state.selText];
-      if (t) { const [h, s2, l] = hexToHsl(t.color); $('pickH').value = h; $('pickS').value = s2; $('pickL').value = l; }
+      if (t) {
+        const [h, s2, l] = hexToHsl(t.color);
+        $('pickH').value = h; $('pickL').value = Math.min(L_MAX, Math.max(L_MIN, l));
+        $('pickS').value = s2 < 25 ? 60 : s2;   // 黒や白に近い色でも、選べる色がちゃんと見えるように
+      }
       onPick();
       setTimeout(() => $('picker').scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50);
     }
   };
   cc.insertBefore(pb, cc.firstChild);
-  for (const id of ['pickH', 'pickS', 'pickL']) $(id).oninput = onPick;
+  $('pickS').oninput = onPick;
+  // 色のエリア：横＝色み、縦＝明るさ
+  const fw = $('fieldWrap');
+  const pickAt = e => {
+    const r = $('pickField').getBoundingClientRect();
+    const x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+    $('pickH').value = Math.round(x * 360);
+    $('pickL').value = Math.round(L_MAX - y * (L_MAX - L_MIN));
+    onPick(e);
+  };
+  let picking = false;
+  fw.addEventListener('pointerdown', e => { picking = true; fw.setPointerCapture(e.pointerId); pickAt(e); });
+  fw.addEventListener('pointermove', e => { if (picking) pickAt(e); });
+  for (const ev of ['pointerup', 'pointercancel']) fw.addEventListener(ev, () => { picking = false; });
   $('textSpace').oninput = e => { $('textSpaceVal').textContent = e.target.value; updateText({ space: +e.target.value }); };
   $('textInput').oninput = e => updateText({ text: e.target.value });
   $('textSize').oninput = e => { $('textSizeVal').textContent = e.target.value; updateText({ size: +e.target.value }); };
@@ -1313,12 +1335,30 @@ function hexToHsl(hex) {
   }
   return [Math.round(h), Math.round(s * 100), Math.round(l * 100)];
 }
+const L_MAX = 95, L_MIN = 5;
+let fieldS = -1;
+function drawField(s2) {
+  const cv = $('pickField'), W = 360, H = 120;
+  if (cv.width !== W) { cv.width = W; cv.height = H; }
+  if (fieldS === s2) return;
+  fieldS = s2;
+  const g = cv.getContext('2d'), img = g.createImageData(W, H);
+  for (let y = 0; y < H; y++) {
+    const l = L_MAX - y / (H - 1) * (L_MAX - L_MIN);
+    for (let x = 0; x < W; x++) {
+      const hex = hslToHex(x / (W - 1) * 360, s2, l), n = parseInt(hex.slice(1), 16), i = (y * W + x) * 4;
+      img.data[i] = n >> 16 & 255; img.data[i + 1] = n >> 8 & 255; img.data[i + 2] = n & 255; img.data[i + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+}
 function onPick(e) {
   const h = +$('pickH').value, s2 = +$('pickS').value, l = +$('pickL').value, hex = hslToHex(h, s2, l);
-  // スライダーの帯に、今の色の変化をそのまま表示
-  $('pickH').style.background = `linear-gradient(90deg, ${[0, 60, 120, 180, 240, 300, 360].map(x => hslToHex(x, s2, l)).join(',')})`;
-  $('pickS').style.background = `linear-gradient(90deg, ${hslToHex(h, 0, l)}, ${hslToHex(h, 100, l)})`;
-  $('pickL').style.background = `linear-gradient(90deg, #000, ${hslToHex(h, s2, 50)}, #fff)`;
+  drawField(s2);
+  $('pickMark').style.left = (h / 360 * 100) + '%';
+  $('pickMark').style.top = ((L_MAX - l) / (L_MAX - L_MIN) * 100) + '%';
+  $('pickMark').style.background = hex;
+  $('pickS').style.background = `linear-gradient(90deg, ${hslToHex(h, 0, 50)}, ${hslToHex(h, 100, 50)})`;
   $('pickSwatch').style.background = hex;
   $('pickHex').textContent = hex.toUpperCase();
   if (e && state.texts[state.selText]) updateText({ color: hex });   // 開いただけでは色を変えない

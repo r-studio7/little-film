@@ -35,7 +35,7 @@
   #stage { flex: 1; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; padding: 8px 16px; }
   #view { max-width: 100%; max-height: 100%; display: none; touch-action: none; user-select: none; -webkit-user-select: none;
           outline: 1px solid rgba(255,255,255,.22); }
-  #toast { position: fixed; left: 50%; bottom: calc(40px + var(--safe-b)); transform: translateX(-50%); background: rgba(40,40,40,.95);
+  #toast { position: fixed; left: 50%; top: calc(64px + env(safe-area-inset-top, 0px)); max-width: 86vw; text-align: center; transform: translateX(-50%); background: rgba(40,40,40,.95);
            color: #fff; font-size: 13px; padding: 10px 18px; border-radius: 999px; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 20; }
   #toast.show { opacity: 1; }
   #empty { text-align: center; color: var(--sub); line-height: 1.9; }
@@ -138,6 +138,18 @@
           background-image: linear-gradient(90deg, transparent calc(33.33% - .5px), rgba(255,255,255,.55) calc(33.33% - .5px), rgba(255,255,255,.55) calc(33.33% + .5px), transparent calc(33.33% + .5px), transparent calc(66.66% - .5px), rgba(255,255,255,.55) calc(66.66% - .5px), rgba(255,255,255,.55) calc(66.66% + .5px), transparent calc(66.66% + .5px)),
                             linear-gradient(0deg, transparent calc(33.33% - .5px), rgba(255,255,255,.55) calc(33.33% - .5px), rgba(255,255,255,.55) calc(33.33% + .5px), transparent calc(33.33% + .5px), transparent calc(66.66% - .5px), rgba(255,255,255,.55) calc(66.66% - .5px), rgba(255,255,255,.55) calc(66.66% + .5px), transparent calc(66.66% + .5px)); }
   .colorLbl { font-size: 12px; color: #ccc; margin: 6px 0 4px; }
+  .tabs { justify-content: flex-start; overflow-x: auto; scrollbar-width: none; padding: 10px 16px 4px; gap: 18px; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { flex: 0 0 auto; }
+  #layoutView { max-width: 100%; max-height: 100%; display: none; touch-action: none; user-select: none; -webkit-user-select: none;
+                outline: 1px solid rgba(255,255,255,.22); }
+  #layoutPane { display: none; max-height: 34vh; overflow-y: auto; padding: 6px 16px 8px; }
+  #capText { width: 100%; background: #111; color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 16px; }
+  .dropBtn { flex: 0 0 auto; height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid #444; font-size: 11px; color: #ccc; }
+  .dropBtn.on { background: #fff; color: #111; border-color: #fff; }
+  #loupe { position: absolute; width: 60px; height: 60px; margin: -94px 0 0 -30px; border-radius: 50%; border: 4px solid #fff;
+           box-shadow: 0 0 0 1px rgba(0,0,0,.6), 0 4px 12px rgba(0,0,0,.5); display: none; pointer-events: none; z-index: 5; }
+  #loupe::after { content: ''; position: absolute; left: 50%; bottom: -34px; width: 2px; height: 26px; margin-left: -1px; background: #fff; box-shadow: 0 0 2px #000; }
   input[type=range]::-moz-range-track { height: 2px; background: #444; }
   input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #fff; border: 0; }
 
@@ -171,6 +183,8 @@
       <span class="ver" style="font-size:11px;color:#555"></span>
     </div>
     <canvas id="view"></canvas>
+    <canvas id="layoutView"></canvas>
+    <div id="loupe"></div>
     <div id="origBadge">オリジナル</div>
     <div id="grid"></div>
   </div>
@@ -188,6 +202,7 @@
       <button class="tab" data-tab="film">フィルム</button>
       <button class="tab" data-tab="geo">角度</button>
       <button class="tab" data-tab="text">文字</button>
+      <button class="tab" data-tab="layout">インスタ</button>
       <button class="tab" data-tab="fav">★</button>
     </div>
     <div id="presetPane">
@@ -228,6 +243,25 @@
         <button id="geoReset">リセット</button>
       </div>
       <div id="geoList"></div>
+    </div>
+    <div id="layoutPane">
+      <div class="colorLbl">サイズ</div>
+      <div class="chips" id="sizeChips"></div>
+      <div id="layoutOpts">
+        <div class="colorLbl">スタイル</div>
+        <div class="chips" id="styleChips"></div>
+        <div class="adj"><label>余白</label><input type="range" id="padR" min="0" max="25" step="0.5" value="6"><span class="val" id="padV">6</span></div>
+        <div class="colorLbl">背景の色</div>
+        <div class="chips" id="bgChips"></div>
+        <div id="capOpts">
+          <div class="colorLbl">ポストカードの文字</div>
+          <input type="text" id="capText" maxlength="40">
+          <div class="chips" id="capFonts" style="padding-top:10px"></div>
+          <div class="adj"><label>大きさ</label><input type="range" id="capSize" min="2.5" max="9" step="0.25" value="5"><span class="val" id="capSizeV">5</span></div>
+          <div class="chips" id="capColors"></div>
+        </div>
+        <p class="textHint" id="sizeNote"></p>
+      </div>
     </div>
     <div id="favPane">
       <button id="favAdd">★ 今の加工をお気に入りに保存</button>
@@ -301,7 +335,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 2.3';
+const APP_VERSION = 'ver 2.4';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -655,6 +689,10 @@ const state = {
   exporting: false,
   texts: [],           // { text, font, size, color, alpha, x, y }
   geo: { angle: 0, v: 0, h: 0, rot: 0, flip: false },
+  layout: { size: 'none', style: 'simple', pad: 0.06, bg: '#ffffff',
+            cap: { text: 'Postcard from Paris', font: 'serif', color: '#3a3530', size: 5 } },
+  layoutRect: null,    // 出来上がり画像の中で写真がある位置
+  dropper: null,       // スポイトで色を入れる先：'text' | 'bg' | 'cap'
   selText: -1,
   tab: 'preset',
   film: { leak: 0, leakPos: 0, halation: 0, dust: 0, grain: 0, border: 0, frame: 0, stamp: false, date: '' },
@@ -803,7 +841,13 @@ function prepareImage() {
     if (state.type !== 'image') return resolve(null);
     const v = editVersion, r = getExportRenderer();
     renderTo(r, ...outWH(), { time: 0.5 });
-    r.canvas.toBlob(blob => {
+    let out = r.canvas;
+    if (layoutOn()) {
+      const [W, H] = layoutSize();
+      out = document.createElement('canvas'); out.width = W; out.height = H;
+      composeLayout(out.getContext('2d'), r.canvas, W, H);
+    }
+    out.toBlob(blob => {
       if (v === editVersion) ready = { version: v, blob };
       resolve(blob);
     }, 'image/jpeg', 0.95);
@@ -813,7 +857,12 @@ function prepareImage() {
 function placeGrid() {
   const gEl = $('grid');
   if (state.tab !== 'geo' || !state.src) { gEl.style.display = 'none'; return; }
-  const r = view.getBoundingClientRect(), sr = $('stage').getBoundingClientRect();
+  let r = view.getBoundingClientRect();
+  const sr = $('stage').getBoundingClientRect();
+  if (layoutOn() && state.layoutRect) {
+    const b = $('layoutView').getBoundingClientRect(), k = b.width / $('layoutView').width, q = state.layoutRect;
+    r = { left: b.left + q.x * k, top: b.top + q.y * k, width: q.w * k, height: q.h * k };
+  }
   Object.assign(gEl.style, { display: 'block', left: (r.left - sr.left) + 'px', top: (r.top - sr.top) + 'px', width: r.width + 'px', height: r.height + 'px' });
 }
 function drawMain() {
@@ -825,6 +874,59 @@ function drawMain() {
     main.upload(state.src);
   }
   renderMain(w, h, { original: state.showOriginal, time: performance.now() / 1000 });
+  if (layoutOn()) {
+    const lv = $('layoutView'), [W, H] = layoutSize();
+    if (lv.width !== W || lv.height !== H) { lv.width = W; lv.height = H; }
+    state.layoutRect = composeLayout(lv.getContext('2d'), view, W, H);
+  }
+}
+
+/* =========================================================
+   インスタ用レイアウト（4:5などの背景に写真をのせる／ポストカード）
+   ========================================================= */
+const LAYOUT_SIZES = [
+  { id: 'none', name: '元のまま' },
+  { id: '4:5',  name: '4:5 投稿',   w: 1080, h: 1350 },
+  { id: '3:4',  name: '3:4 新グリッド', w: 1080, h: 1440 },
+  { id: '1:1',  name: '1:1',        w: 1080, h: 1080 },
+  { id: '9:16', name: '9:16 ストーリー', w: 1080, h: 1920 },
+];
+const LAYOUT_BGS = ['#ffffff', '#f4efe6', '#e3d8c6', '#d9d6d0', '#141414'];
+const CAP_COLORS = ['#3a3530', '#6b4a32', '#8c6f5a', '#ffffff'];
+function layoutOn() { return state.layout.size !== 'none'; }
+function layoutSize() { const z = LAYOUT_SIZES.find(x => x.id === state.layout.size); return [z.w, z.h]; }
+
+function composeLayout(g, src, W, H) {
+  const L = state.layout, pc = L.style === 'postcard';
+  g.fillStyle = L.bg; g.fillRect(0, 0, W, H);
+  const m = L.pad * W;
+  const cap = pc ? L.cap.text.trim() : '';
+  const capH = cap ? W * L.cap.size / 100 * 2.6 : 0;
+  const mat = pc ? W * 0.025 : 0;
+  const aw = W - 2 * m - 2 * mat, ah = H - 2 * m - capH - 2 * mat;
+  const sc = Math.min(aw / src.width, ah / src.height);
+  const pw = src.width * sc, ph = src.height * sc;
+  const px = (W - pw) / 2;
+  const py = (H - (ph + 2 * mat + capH)) / 2 + mat;
+  if (pc) {
+    g.save();
+    g.shadowColor = 'rgba(0,0,0,.2)'; g.shadowBlur = W * 0.025; g.shadowOffsetY = W * 0.008;
+    g.fillStyle = '#fbfaf6';
+    g.fillRect(px - mat, py - mat, pw + 2 * mat, ph + 2 * mat);
+    g.restore();
+  }
+  g.drawImage(src, px, py, pw, ph);
+  if (cap) {
+    const t = { font: L.cap.font };
+    const fpx = W * L.cap.size / 100;
+    g.save();
+    g.font = fontString(t, fpx);
+    g.fillStyle = L.cap.color;
+    g.textBaseline = 'middle';
+    drawSpaced(g, cap, W / 2, py + ph + mat + capH / 2, 0);
+    g.restore();
+  }
+  return { x: px, y: py, w: pw, h: ph };
 }
 
 function loop() {
@@ -893,7 +995,8 @@ function loadVideo(url) {
 function setSource(type, src, w, h) {
   Object.assign(state, { type, src, w, h });
   $('empty').style.display = 'none';
-  view.style.display = 'block';
+  view.style.display = layoutOn() ? 'none' : 'block';
+  $('layoutView').style.display = layoutOn() ? 'block' : 'none';
   $('exportBtn').disabled = false;
   $('videoBar').style.display = type === 'video' ? 'flex' : 'none';
   $('playBtn').textContent = '▶';
@@ -1002,6 +1105,7 @@ for (const t of document.querySelectorAll('.tab')) {
     $('textPane').style.display = t.dataset.tab === 'text' ? 'block' : 'none';
     $('favPane').style.display = t.dataset.tab === 'fav' ? 'block' : 'none';
     $('geoPane').style.display = t.dataset.tab === 'geo' ? 'block' : 'none';
+    $('layoutPane').style.display = t.dataset.tab === 'layout' ? 'block' : 'none';
     state.tab = t.dataset.tab;
     placeGrid();
   };
@@ -1066,6 +1170,7 @@ function saveFavorite(name, withText) {
     presetId: state.presetId, strength: state.strength,
     adj: { ...state.adj }, film,
     texts: withText ? JSON.parse(JSON.stringify(state.texts)) : null,
+    layout: JSON.parse(JSON.stringify(state.layout)),
   });
   saveFavs(); buildFavList();
   toast(`「${name}」をお気に入りに保存したよ`);
@@ -1083,6 +1188,8 @@ function applyFavorite(f) {
   state.film.leakPos = f.film.leakPos || 0;
   for (const x of $('leakPos').children) x.classList.toggle('on', +x.dataset.v === state.film.leakPos);
   setStamp(!!f.film.stamp);
+  // インスタ用レイアウト
+  if (f.layout) { state.layout = JSON.parse(JSON.stringify(f.layout)); setLayout({}); }
   // 文字
   if (f.texts) { state.texts = JSON.parse(JSON.stringify(f.texts)); state.selText = state.texts.length - 1; state.texts.forEach(loadFont); refreshTextUI(); }
   requestRender();
@@ -1249,6 +1356,74 @@ function enhanceRange(inp) {
 }
 
 /* =========================================================
+   7.57 インスタタブ
+   ========================================================= */
+function chip(label, on, onclick, extraClass = '') {
+  const b = document.createElement('button');
+  b.className = 'chip ' + extraClass + (on ? ' on' : '');
+  b.textContent = label; b.onclick = onclick;
+  return b;
+}
+function colorRow(el, colors, current, onPick, dropTarget) {
+  el.innerHTML = '';
+  for (const c of colors) {
+    const b = document.createElement('button');
+    b.className = 'colorDot' + (c === current ? ' on' : '');
+    b.style.background = c; b.onclick = () => onPick(c);
+    el.appendChild(b);
+  }
+  const db = document.createElement('button');
+  db.className = 'dropBtn' + (state.dropper === dropTarget ? ' on' : ''); db.dataset.t = dropTarget;
+  db.textContent = '💧 スポイト';
+  db.onclick = () => startDropper(dropTarget);
+  el.appendChild(db);
+  if (!colors.includes(current)) {
+    const cur = document.createElement('span');
+    cur.className = 'colorDot on'; cur.style.background = current; cur.title = current;
+    el.appendChild(cur);
+  }
+}
+function setLayout(patch) {
+  Object.assign(state.layout, patch);
+  const on = layoutOn();
+  view.style.display = state.src && !on ? 'block' : 'none';
+  $('layoutView').style.display = state.src && on ? 'block' : 'none';
+  refreshLayoutUI(); requestRender();
+  if (on) { const L = state.layout; document.fonts?.load(fontString({ font: L.cap.font }, 40), L.cap.text).then(() => requestRender()).catch(() => {}); }
+}
+function refreshLayoutUI() {
+  const L = state.layout;
+  const sc = $('sizeChips'); sc.innerHTML = '';
+  for (const z of LAYOUT_SIZES) sc.appendChild(chip(z.name, z.id === L.size, () => setLayout({ size: z.id })));
+  $('layoutOpts').style.display = layoutOn() ? '' : 'none';
+  const st = $('styleChips'); st.innerHTML = '';
+  st.appendChild(chip('シンプル', L.style === 'simple', () => setLayout({ style: 'simple' })));
+  st.appendChild(chip('Postcard', L.style === 'postcard', () => setLayout({ style: 'postcard', bg: L.style === 'postcard' ? L.bg : '#e3d8c6', pad: L.style === 'postcard' ? L.pad : 0.08 })));
+  $('padR').value = +(L.pad * 100).toFixed(1); $('padV').textContent = +(L.pad * 100).toFixed(1);
+  colorRow($('bgChips'), LAYOUT_BGS, L.bg, c => setLayout({ bg: c }), 'bg');
+  $('capOpts').style.display = L.style === 'postcard' ? '' : 'none';
+  if (document.activeElement !== $('capText')) $('capText').value = L.cap.text;
+  const cf = $('capFonts'); cf.innerHTML = '';
+  for (const f of FONTS) {
+    const b = chip(f.name, f.id === L.cap.font, () => { L.cap.font = f.id; setLayout({}); }, 'fontChip');
+    b.style.fontFamily = f.css; if (f.style) b.style.fontStyle = f.style;
+    cf.appendChild(b);
+  }
+  $('capSize').value = L.cap.size; $('capSizeV').textContent = L.cap.size;
+  colorRow($('capColors'), CAP_COLORS, L.cap.color, c => { L.cap.color = c; setLayout({}); }, 'cap');
+  if (layoutOn()) {
+    const [W, H] = layoutSize();
+    $('sizeNote').textContent = `出来上がり：${W}×${H}px（インスタにそのまま投稿できるサイズ）`;
+  }
+}
+function buildLayoutUI() {
+  $('padR').oninput = e => { state.layout.pad = e.target.value / 100; $('padV').textContent = e.target.value; requestRender(); };
+  $('capText').oninput = e => { state.layout.cap.text = e.target.value; setLayout({}); };
+  $('capSize').oninput = e => { state.layout.cap.size = +e.target.value; $('capSizeV').textContent = e.target.value; requestRender(); };
+  refreshLayoutUI();
+}
+
+/* =========================================================
    7.6 文字タブ
    ========================================================= */
 function loadFont(t) {
@@ -1292,6 +1467,10 @@ function buildTextUI() {
     }
   };
   cc.insertBefore(pb, cc.firstChild);
+  const db = document.createElement('button');
+  db.className = 'dropBtn'; db.dataset.t = 'text'; db.textContent = '💧 スポイト';
+  db.onclick = () => startDropper('text');
+  cc.insertBefore(db, pb.nextSibling);
   $('pickS').oninput = onPick;
   // 色のエリア：横＝色み、縦＝明るさ
   const fw = $('fieldWrap');
@@ -1417,12 +1596,58 @@ function refreshTextUI(keepInput) {
    ========================================================= */
 const showOrig = on => { state.showOriginal = on; $('origBadge').style.display = on ? 'block' : 'none'; needsRender = true; };
 let dragging = false;
+function displayCanvas() { return layoutOn() ? $('layoutView') : view; }
+// 画面の位置 → 写真の中の位置（0〜1）
 function pointerPos(e) {
-  const b = view.getBoundingClientRect();
-  return [Math.min(1, Math.max(0, (e.clientX - b.left) / b.width)), Math.min(1, Math.max(0, (e.clientY - b.top) / b.height))];
+  const cv = displayCanvas(), b = cv.getBoundingClientRect();
+  let x = (e.clientX - b.left) / b.width, y = (e.clientY - b.top) / b.height;
+  if (layoutOn() && state.layoutRect) {
+    const q = state.layoutRect;
+    x = (x * cv.width - q.x) / q.w; y = (y * cv.height - q.y) / q.h;
+  }
+  return [Math.min(1, Math.max(0, x)), Math.min(1, Math.max(0, y))];
 }
+
+/* スポイト：写真をタッチして色を拾う */
+const sampleCtx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+sampleCtx.canvas.width = sampleCtx.canvas.height = 5;
+function sampleAt(e) {
+  const cv = displayCanvas(), b = cv.getBoundingClientRect();
+  const cx = Math.round((e.clientX - b.left) / b.width * cv.width), cy = Math.round((e.clientY - b.top) / b.height * cv.height);
+  sampleCtx.clearRect(0, 0, 5, 5);
+  sampleCtx.drawImage(cv, cx - 2, cy - 2, 5, 5, 0, 0, 5, 5);
+  const d = sampleCtx.getImageData(0, 0, 5, 5).data;
+  let r = 0, g = 0, bl = 0, n = 0;
+  for (let i = 0; i < d.length; i += 4) if (d[i + 3]) { r += d[i]; g += d[i + 1]; bl += d[i + 2]; n++; }
+  if (!n) return null;
+  return '#' + [r, g, bl].map(v => Math.round(v / n).toString(16).padStart(2, '0')).join('');
+}
+function startDropper(target) {
+  if (!state.src) return alert('先に写真か動画を開いてね');
+  state.dropper = state.dropper === target ? null : target;
+  document.querySelectorAll('.dropBtn').forEach(b => b.classList.toggle('on', b.dataset.t === state.dropper));
+  if (state.dropper) toast('写真をタッチして色を選んでね（なぞると色が変わるよ）');
+}
+function showLoupe(e, color) {
+  const sr = $('stage').getBoundingClientRect(), lp = $('loupe');
+  Object.assign(lp.style, { display: 'block', left: (e.clientX - sr.left) + 'px', top: (e.clientY - sr.top) + 'px', background: color || 'transparent' });
+}
+function applyDropper(color) {
+  const t = state.dropper;
+  if (t === 'text') updateText({ color });
+  else if (t === 'bg') { state.layout.bg = color; refreshLayoutUI(); requestRender(); }
+  else if (t === 'cap') { state.layout.cap.color = color; refreshLayoutUI(); requestRender(); }
+}
+let dropping = false;
+
 let dragOff = [0, 0];
-view.addEventListener('pointerdown', e => {
+function onSurfaceDown(e) {
+  const surf = e.currentTarget;
+  if (state.dropper) {
+    dropping = true; surf.setPointerCapture(e.pointerId);
+    showLoupe(e, sampleAt(e));
+    return;
+  }
   if (state.tab === 'text' && state.texts.length) {
     // 触ったところにある文字をつかむ（つかんだ位置のまま動く＝ジャンプしない）
     const [x, y] = pointerPos(e);
@@ -1436,13 +1661,32 @@ view.addEventListener('pointerdown', e => {
     const t = state.texts[best];
     dragOff = [t.x - x, t.y - y];
     dragging = true;
-    view.setPointerCapture(e.pointerId);
+    surf.setPointerCapture(e.pointerId);
     return;
   }
   showOrig(true);
-});
-view.addEventListener('pointermove', e => { if (dragging) { const [x, y] = pointerPos(e); moveText(x + dragOff[0], y + dragOff[1]); } });
-for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) view.addEventListener(ev, () => { dragging = false; showOrig(false); });
+}
+for (const surf of [view, $('layoutView')]) {
+  surf.addEventListener('pointerdown', onSurfaceDown);
+  surf.addEventListener('pointermove', e => {
+    if (dropping) { showLoupe(e, sampleAt(e)); return; }
+    if (dragging) { const [x, y] = pointerPos(e); moveText(x + dragOff[0], y + dragOff[1]); }
+  });
+  surf.addEventListener('pointerup', e => {
+    if (dropping) {
+      const c = sampleAt(e);
+      dropping = false; $('loupe').style.display = 'none';
+      if (c) { applyDropper(c); toast(`${c.toUpperCase()} を選んだよ`); }
+      state.dropper = null;
+      document.querySelectorAll('.dropBtn').forEach(b => b.classList.remove('on'));
+    }
+  });
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) surf.addEventListener(ev, () => {
+    if (ev !== 'pointerup' && dropping) { dropping = false; $('loupe').style.display = 'none'; }
+    dragging = false; showOrig(false);
+  });
+  surf.addEventListener('contextmenu', e => e.preventDefault());
+}
 function moveText(x, y) {
   const t = state.texts[state.selText]; if (!t) return;
   t.x = Math.min(1, Math.max(0, x)); t.y = Math.min(1, Math.max(0, y)); requestRender();
@@ -1533,10 +1777,11 @@ async function exportVideo() {
   v.onseeked = () => { requestRender(); if (v.paused) refreshThumbs(); };
   drawMain();
 
-  const stream = view.captureStream(30);
+  const recCanvas = layoutOn() ? $('layoutView') : view;
+  const stream = recCanvas.captureStream(30);
   tracks.forEach(t => stream.addTrack(t));
   const mime = pickMime();
-  const [ew, eh] = exportSize();
+  const [ew, eh] = [recCanvas.width, recCanvas.height];
   recorder = new MediaRecorder(stream, { mimeType: mime || undefined, videoBitsPerSecond: Math.round(ew * eh * 30 * 0.2) });
   const chunks = [];
   recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
@@ -1635,6 +1880,7 @@ buildFilm();
 buildTextUI();
 buildFavList();
 buildGeo();
+buildLayoutUI();
 document.querySelectorAll('input[type=range]').forEach(enhanceRange);
 updateStrengthUI();
 </script>

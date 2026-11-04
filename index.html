@@ -59,7 +59,19 @@
   .preset .name { font-size: 10px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .preset.add .ph { display: flex; align-items: center; justify-content: center; font-size: 26px; color: var(--sub); border: 1px dashed #444; background: none; }
 
-  #adjustPane { display: none; max-height: 34vh; overflow-y: auto; padding: 6px 16px 8px; }
+  #adjustPane, #filmPane { display: none; max-height: 34vh; overflow-y: auto; padding: 6px 16px 8px; }
+  .chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip { flex: 0 0 auto; font-size: 12px; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line); color: #ccc; }
+  .chip.on { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 600; }
+  .seg { display: flex; gap: 6px; grid-column: 2 / 4; }
+  .seg button { flex: 1; font-size: 11px; padding: 6px 0; border-radius: 8px; border: 1px solid var(--line); color: #ccc; }
+  .seg button.on { border-color: var(--text); color: var(--text); }
+  .stampRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0 4px; font-size: 12px; color: #ccc; }
+  .stampRow label { display: flex; align-items: center; gap: 8px; }
+  .stampRow input[type=checkbox] { width: 18px; height: 18px; accent-color: #ff8a2a; }
+  .stampRow input[type=date] { background: #111; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: 14px; }
+  .stampRow input[type=date]:disabled { opacity: .35; }
   .adj { display: grid; grid-template-columns: 84px 1fr 38px; align-items: center; gap: 10px; padding: 7px 0; }
   .adj label { font-size: 12px; color: #ccc; }
   .adj .val { font-size: 12px; text-align: right; color: var(--sub); font-variant-numeric: tabular-nums; }
@@ -115,6 +127,7 @@
     <div class="tabs">
       <button class="tab on" data-tab="preset">プリセット</button>
       <button class="tab" data-tab="adjust">調整</button>
+      <button class="tab" data-tab="film">フィルム</button>
     </div>
     <div id="presetPane">
       <div id="strengthRow">
@@ -130,6 +143,20 @@
       <div class="adjFoot">
         <button id="resetAdj">調整をリセット</button>
         <button id="savePresetBtn">今の色味をプリセットに保存</button>
+      </div>
+    </div>
+    <div id="filmPane">
+      <div class="chips" id="filmChips"></div>
+      <div id="filmList"></div>
+      <div class="adj">
+        <label>光漏れの位置</label>
+        <div class="seg" id="leakPos">
+          <button data-v="0" class="on">左</button><button data-v="1">右上</button><button data-v="2">下</button>
+        </div>
+      </div>
+      <div class="stampRow">
+        <label><input type="checkbox" id="stampOn">日付スタンプ</label>
+        <input type="date" id="stampDate" disabled>
       </div>
     </div>
   </div>
@@ -213,6 +240,23 @@ const BUILTIN_PRESETS = [
 ];
 
 const STORE_KEY = 'colorstudio.customPresets.v1';
+
+/* フィルムカメラ風エフェクト */
+const FILM_KEYS = ['leak', 'leakPos', 'halation', 'dust', 'border'];
+const FILM_SLIDERS = [
+  { key: 'leak',     label: '光漏れ' },
+  { key: 'halation', label: 'ハレーション' },
+  { key: 'dust',     label: 'ほこり・傷' },
+  { key: 'grain',    label: 'フィルム粒子' },
+  { key: 'border',   label: 'フチ' },
+];
+const FILM_RECIPES = [
+  { name: 'なし',         f: {} },
+  { name: '使い捨てカメラ', f: { leak: .35, halation: .45, dust: .3,  grain: .35, stamp: true } },
+  { name: 'シネマ',       f: { halation: .65, dust: .15, grain: .25 } },
+  { name: 'インスタント',   f: { leak: .2,  halation: .25, grain: .2, border: .7 } },
+  { name: 'ヴィンテージ',   f: { leak: .25, halation: .3,  dust: .7,  grain: .45, stamp: true } },
+];
 let customPresets = loadCustom();
 function loadCustom() { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || []; } catch { return []; } }
 function saveCustom() { localStorage.setItem(STORE_KEY, JSON.stringify(customPresets)); }
@@ -235,13 +279,46 @@ uniform float u_exposure, u_contrast, u_saturation, u_temp, u_tint;
 uniform float u_highlights, u_shadows, u_fade, u_vignette, u_grain;
 uniform vec3 u_sTint, u_hTint;
 uniform float u_hiDesat;
+uniform sampler2D u_stamp;
+uniform vec2 u_res;
+uniform float u_seed, u_anim;
+uniform float u_leak, u_leakPos, u_halation, u_dust, u_border, u_stampOn;
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
 
 void main() {
-  vec3 c = texture2D(u_tex, v_uv).rgb;
-  if (u_original > 0.5) { gl_FragColor = vec4(c, 1.0); return; }
+  if (u_original > 0.5) { gl_FragColor = vec4(texture2D(u_tex, v_uv).rgb, 1.0); return; }
+
+  // フチ（インスタント写真風：下だけ太い）
+  float bpx = u_border * 0.07 * min(u_res.x, u_res.y);
+  vec2 mHi = vec2(bpx) / u_res;
+  vec2 mLo = vec2(mHi.x, mHi.y * 2.2);
+  vec2 uv = (v_uv - mLo) / (1.0 - mLo - mHi);
+  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) {
+    float bn = hash(gl_FragCoord.xy) - 0.5;
+    gl_FragColor = vec4(vec3(0.965, 0.955, 0.93) + bn * 0.012, 1.0);
+    return;
+  }
+
+  vec3 c = texture2D(u_tex, uv).rgb;
+
+  // ハレーション用：明るい部分のまわりの光を集める
+  float halo = 0.0;
+  if (u_halation > 0.0) {
+    vec2 rr = vec2(0.006 * min(u_res.x, u_res.y)) / u_res;
+    for (int i = 0; i < 12; i++) {
+      float a = float(i) * 0.5236;
+      vec2 o = vec2(cos(a), sin(a));
+      halo += max(luma(texture2D(u_tex, uv + o * rr).rgb) - 0.72, 0.0);
+      halo += max(luma(texture2D(u_tex, uv + o * rr * 2.2).rgb) - 0.72, 0.0) * 0.7;
+    }
+    halo = clamp(halo / 24.0 * 4.0, 0.0, 1.0);
+  }
 
   c *= pow(2.0, u_exposure);                                   // 露出
   c.r += u_temp * 0.08;  c.b -= u_temp * 0.08;                 // 色温度
@@ -263,11 +340,45 @@ void main() {
 
   c = c * (1.0 - u_fade * 0.2) + u_fade * 0.15;                // フェード（黒を持ち上げる）
 
-  float r = length(v_uv - 0.5) * 1.414;
+  c += halo * vec3(1.0, 0.32, 0.12) * u_halation * 0.9;       // ハレーション（光のにじみ）
+
+  float asp = u_res.x / u_res.y;
+  if (u_leak > 0.0) {                                          // 光漏れ
+    vec2 o = u_leakPos < 0.5 ? vec2(-0.12, 0.62) : (u_leakPos < 1.5 ? vec2(1.12, 0.9) : vec2(0.35, -0.12));
+    o += vec2(sin(u_anim * 0.7), cos(u_anim * 0.5)) * 0.05;
+    vec2 d = (uv - o) * vec2(asp, 1.0);
+    float k = exp(-dot(d, d) * 4.5) * (0.6 + 0.8 * vnoise(uv * 2.5 + u_leakPos * 7.0 + u_anim * 0.25));
+    k = clamp(k * 1.6, 0.0, 1.0);
+    vec3 lc = mix(vec3(0.95, 0.12, 0.02), vec3(1.0, 0.68, 0.3), smoothstep(0.35, 1.0, k));
+    c = 1.0 - (1.0 - c) * (1.0 - clamp(lc * k * u_leak * 1.6, 0.0, 1.0));
+  }
+
+  float r = length(uv - 0.5) * 1.414;
   c *= 1.0 - u_vignette * 0.8 * smoothstep(0.3, 1.0, r);       // ビネット
+
+  if (u_dust > 0.0) {                                          // ほこり・傷
+    vec2 g = uv * vec2(asp, 1.0) * 38.0;
+    vec2 cell = floor(g), f = fract(g);
+    float h = hash(cell + u_seed * 17.0);
+    if (h < u_dust * 0.12) {
+      vec2 pt = vec2(hash(cell + 3.1 + u_seed), hash(cell + 7.7 + u_seed)) * 0.8 + 0.1;
+      float rad = 0.03 + 0.07 * hash(cell + 11.0 + u_seed);
+      float a = 1.0 - smoothstep(rad * 0.5, rad, length((f - pt) * vec2(1.0, 0.6 + hash(cell + 5.0))));
+      c = mix(c, h < u_dust * 0.07 ? vec3(0.95, 0.94, 0.9) : vec3(0.06), a * 0.8);
+    }
+    if (u_anim > 0.0 && hash(vec2(u_seed, 3.3)) < u_dust * 0.45) {   // 動画のときだけ縦の傷がチラつく
+      float x = hash(vec2(u_seed, 9.1));
+      c = mix(c, vec3(0.92), (1.0 - smoothstep(0.0, 0.0018, abs(uv.x - x))) * 0.45);
+    }
+  }
 
   float n = hash(gl_FragCoord.xy + fract(u_time) * 100.0) - 0.5;
   c += n * u_grain * 0.18;                                     // 粒子
+
+  if (u_stampOn > 0.5) {                                       // 日付スタンプ
+    vec4 st = texture2D(u_stamp, v_uv);
+    c = mix(c, st.rgb, st.a);
+  }
 
   gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }`;
@@ -303,17 +414,37 @@ class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
+    // 日付スタンプ用の2枚目のテクスチャ
+    this.stampTex = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.stampTex);
+    for (const [k, v] of [[gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE], [gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR]])
+      gl.texParameteri(gl.TEXTURE_2D, k, v);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
+    gl.activeTexture(gl.TEXTURE0);
+
     this.u = {};
-    for (const n of ['u_original','u_time','u_sTint','u_hTint','u_hiDesat', ...KEYS.map(k => 'u_' + k)])
+    for (const n of ['u_original','u_time','u_sTint','u_hTint','u_hiDesat','u_tex','u_stamp','u_res','u_seed','u_anim',
+                     ...FILM_KEYS.map(k => 'u_' + k), 'u_stampOn', ...KEYS.map(k => 'u_' + k)])
       this.u[n] = gl.getUniformLocation(prog, n);
+    gl.uniform1i(this.u.u_tex, 0);
+    gl.uniform1i(this.u.u_stamp, 1);
     this.maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+  }
+  uploadStamp(canvas) {
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.stampTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    gl.activeTexture(gl.TEXTURE0);
   }
   upload(src) {
     const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, src);
   }
-  render(params, w, h, { original = false, time = 0 } = {}) {
+  render(params, w, h, { original = false, time = 0, anim = 0, seed = 0 } = {}) {
     const gl = this.gl, c = this.canvas;
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
     gl.viewport(0, 0, w, h);
@@ -323,6 +454,12 @@ class Renderer {
     gl.uniform1f(this.u.u_hiDesat, params.hiDesat || 0);
     gl.uniform1f(this.u.u_original, original ? 1 : 0);
     gl.uniform1f(this.u.u_time, time);
+    const film = params.film || {};
+    for (const k of FILM_KEYS) gl.uniform1f(this.u['u_' + k], film[k] || 0);
+    gl.uniform1f(this.u.u_stampOn, film.stamp ? 1 : 0);
+    gl.uniform2f(this.u.u_res, w, h);
+    gl.uniform1f(this.u.u_anim, anim);
+    gl.uniform1f(this.u.u_seed, seed);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 }
@@ -345,6 +482,7 @@ const state = {
   adj: Object.fromEntries(KEYS.map(k => [k, 0])),
   showOriginal: false,
   exporting: false,
+  film: { leak: 0, leakPos: 0, halation: 0, dust: 0, grain: 0, border: 0, stamp: false, date: '' },
 };
 
 function currentPreset() { return allPresets().find(p => p.id === state.presetId) || allPresets()[0]; }
@@ -358,6 +496,53 @@ function effectiveParams(preset = currentPreset(), strength = state.strength, ad
   out.hTint = (p.hTint || [0,0,0]).map(v => v * strength);
   out.hiDesat = (p.hiDesat || 0) * strength;
   return out;
+}
+
+// メイン画面用：色味 + フィルム効果
+function mainParams() {
+  const p = effectiveParams();
+  p.grain += state.film.grain;
+  p.film = state.film;
+  return p;
+}
+
+// 日付スタンプ（オレンジのデジタル数字風）を出力サイズの透明キャンバスに描く
+const stampCanvas = document.createElement('canvas');
+let stampKey = '';
+function stampText() {
+  const [y, m, d] = (state.film.date || '').split('-');
+  return y ? `'${y.slice(2)} ${m} ${d}` : '';
+}
+function ensureStamp(w, h) {
+  const f = state.film;
+  if (!f.stamp) return;
+  const key = [w, h, f.date, f.border].join('|');
+  if (key === stampKey) return;
+  stampKey = key;
+  stampCanvas.width = w; stampCanvas.height = h;
+  const g = stampCanvas.getContext('2d');
+  g.clearRect(0, 0, w, h);
+  const bpx = f.border * 0.07 * Math.min(w, h);
+  const fs = Math.round(Math.min(w, h) * 0.045);
+  g.font = `700 ${fs}px "Courier New", ui-monospace, Menlo, monospace`;
+  g.textAlign = 'right';
+  g.textBaseline = 'alphabetic';
+  const x = w - bpx - fs * 1.0, y = h - bpx * 2.2 - fs * 0.8, t = stampText();
+  g.shadowColor = 'rgba(255, 70, 0, 0.95)';
+  g.shadowBlur = fs * 0.6;
+  g.fillStyle = 'rgba(255, 140, 50, 0.9)';
+  g.fillText(t, x, y);
+  g.shadowBlur = fs * 0.12;
+  g.fillStyle = 'rgba(255, 175, 90, 0.95)';
+  g.fillText(t, x, y);
+  main.uploadStamp(stampCanvas);
+}
+
+function renderMain(w, h, opts = {}) {
+  ensureStamp(w, h);
+  const v = state.type === 'video' ? state.src : null;
+  const anim = v ? v.currentTime + 0.001 : 0;
+  main.render(mainParams(), w, h, { anim, seed: v ? Math.floor(v.currentTime * 12) : 0, ...opts });
 }
 
 function fitSize(w, h, maxEdge) {
@@ -378,7 +563,7 @@ function drawMain() {
     if (state.src.readyState < 2) return;
     main.upload(state.src);
   }
-  main.render(effectiveParams(), w, h, { original: state.showOriginal, time: performance.now() / 1000 });
+  renderMain(w, h, { original: state.showOriginal, time: performance.now() / 1000 });
 }
 
 function loop() {
@@ -404,6 +589,7 @@ $('file').onchange = e => {
   if (!f) return;
   if (state.src && state.type === 'video') { state.src.pause(); URL.revokeObjectURL(state.src.src); }
   const url = URL.createObjectURL(f);
+  setStampDate(new Date(f.lastModified || Date.now()));
   if (f.type.startsWith('video/')) loadVideo(url); else loadImage(url);
 };
 
@@ -546,6 +732,7 @@ for (const t of document.querySelectorAll('.tab')) {
     for (const x of document.querySelectorAll('.tab')) x.classList.toggle('on', x === t);
     $('presetPane').style.display = t.dataset.tab === 'preset' ? '' : 'none';
     $('adjustPane').style.display = t.dataset.tab === 'adjust' ? 'block' : 'none';
+    $('filmPane').style.display = t.dataset.tab === 'film' ? 'block' : 'none';
   };
 }
 
@@ -564,6 +751,68 @@ $('okName').onclick = () => {
   document.querySelector('.tab[data-tab=preset]').click();
   document.querySelector(`.preset[data-id="${p.id}"]`)?.scrollIntoView({ inline: 'center', behavior: 'smooth' });
 };
+
+/* =========================================================
+   7.5 フィルムタブ
+   ========================================================= */
+function setStampDate(d) {
+  const p = n => String(n).padStart(2, '0');
+  state.film.date = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  $('stampDate').value = state.film.date;
+  requestRender();
+}
+
+function buildFilm() {
+  const chips = $('filmChips');
+  FILM_RECIPES.forEach((r, i) => {
+    const b = document.createElement('button');
+    b.className = 'chip' + (i === 0 ? ' on' : '');
+    b.textContent = r.name;
+    b.onclick = () => {
+      for (const c of chips.children) c.classList.toggle('on', c === b);
+      for (const row of $('filmList').children) row._set(Math.round((r.f[row._key] || 0) * 100), true);
+      setStamp(!!r.f.stamp);
+    };
+    chips.appendChild(b);
+  });
+
+  for (const a of FILM_SLIDERS) {
+    const row = document.createElement('div');
+    row.className = 'adj';
+    row.innerHTML = `<label>${a.label}</label><input type="range" min="0" max="100" step="1" value="0"><span class="val">0</span>`;
+    const input = row.querySelector('input'), val = row.querySelector('.val');
+    row._key = a.key;
+    row._set = (v, fromRecipe) => {
+      state.film[a.key] = v / 100;
+      input.value = v; val.textContent = v;
+      row.classList.toggle('changed', +v !== 0);
+      if (!fromRecipe) for (const c of $('filmChips').children) c.classList.remove('on');
+      requestRender();
+    };
+    input.oninput = () => row._set(+input.value);
+    row.querySelector('label').onclick = () => row._set(0);
+    $('filmList').appendChild(row);
+  }
+
+  for (const b of $('leakPos').children) {
+    b.onclick = () => {
+      for (const x of $('leakPos').children) x.classList.toggle('on', x === b);
+      state.film.leakPos = +b.dataset.v;
+      requestRender();
+    };
+  }
+
+  $('stampOn').onchange = e => setStamp(e.target.checked);
+  $('stampDate').onchange = e => { state.film.date = e.target.value; requestRender(); };
+  setStampDate(new Date());
+}
+
+function setStamp(on) {
+  state.film.stamp = on;
+  $('stampOn').checked = on;
+  $('stampDate').disabled = !on;
+  requestRender();
+}
 
 /* =========================================================
    8. 長押しでオリジナルと比較
@@ -605,7 +854,7 @@ function stamp() { const d = new Date(), p = n => String(n).padStart(2, '0'); re
 
 function exportImage() {
   // フル解像度で描き直してJPEG化
-  main.render(effectiveParams(), state.w, state.h, { time: 0.5 });
+  renderMain(state.w, state.h, { time: 0.5 });
   view.toBlob(blob => {
     requestRender(); // プレビューサイズに戻す
     showResult(blob, `littlefilm_${stamp()}.jpg`, 'image');
@@ -735,6 +984,7 @@ $('saveResult').onclick = async () => {
    ========================================================= */
 buildPresetStrip();
 buildAdjust();
+buildFilm();
 updateStrengthUI();
 </script>
 </body>

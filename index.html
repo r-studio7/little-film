@@ -30,7 +30,11 @@
   .hbtn:disabled { opacity: .3; }
 
   #stage { flex: 1; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; padding: 8px 16px; }
-  #view { max-width: 100%; max-height: 100%; display: none; touch-action: none; user-select: none; -webkit-user-select: none; }
+  #view { max-width: 100%; max-height: 100%; display: none; touch-action: none; user-select: none; -webkit-user-select: none;
+          outline: 1px solid rgba(255,255,255,.22); }
+  #toast { position: fixed; left: 50%; bottom: calc(40px + var(--safe-b)); transform: translateX(-50%); background: rgba(40,40,40,.95);
+           color: #fff; font-size: 13px; padding: 10px 18px; border-radius: 999px; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 20; }
+  #toast.show { opacity: 1; }
   #empty { text-align: center; color: var(--sub); line-height: 1.9; }
   #empty .big { display: inline-block; margin-top: 14px; padding: 12px 26px; border-radius: 999px; background: var(--accent); color: #111; font-weight: 600; }
   #origBadge { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.6); padding: 4px 12px; border-radius: 999px; font-size: 12px; display: none; }
@@ -166,6 +170,7 @@
 </div>
 
 <input type="file" id="file" accept="image/*,video/*" hidden>
+<div id="toast"></div>
 
 <!-- 書き出し結果 -->
 <div class="modal" id="resultModal">
@@ -205,7 +210,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 1.6';
+const APP_VERSION = 'ver 1.7';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -538,17 +543,16 @@ function mainParams() {
 
 // 日付スタンプ（オレンジのデジタル数字風）を出力サイズの透明キャンバスに描く
 const stampCanvas = document.createElement('canvas');
-let stampKey = '';
 function stampText() {
   const [y, m, d] = (state.film.date || '').split('-');
   return y ? `'${y.slice(2)} ${m} ${d}` : '';
 }
-function ensureStamp(w, h) {
+function ensureStamp(r, w, h) {
   const f = state.film;
   if (!f.stamp) return;
   const key = [w, h, f.date, f.border, f.frame].join('|');
-  if (key === stampKey) return;
-  stampKey = key;
+  if (key === r.stampKey) return;
+  r.stampKey = key;
   stampCanvas.width = w; stampCanvas.height = h;
   const g = stampCanvas.getContext('2d');
   g.clearRect(0, 0, w, h);
@@ -566,15 +570,16 @@ function ensureStamp(w, h) {
   g.shadowBlur = fs * 0.12;
   g.fillStyle = 'rgba(255, 175, 90, 0.95)';
   g.fillText(t, x, y);
-  main.uploadStamp(stampCanvas);
+  r.uploadStamp(stampCanvas);
 }
 
-function renderMain(w, h, opts = {}) {
-  ensureStamp(w, h);
+function renderTo(r, w, h, opts = {}) {
+  ensureStamp(r, w, h);
   const v = state.type === 'video' ? state.src : null;
   const anim = v ? v.currentTime + 0.001 : 0;
-  main.render(mainParams(), w, h, { anim, seed: v ? Math.floor(v.currentTime * 12) : 0, ...opts });
+  r.render(mainParams(), w, h, { anim, seed: v ? Math.floor(v.currentTime * 12) : 0, ...opts });
 }
+function renderMain(w, h, opts = {}) { renderTo(main, w, h, opts); }
 
 function fitSize(w, h, maxEdge) {
   const s = Math.min(1, maxEdge / Math.max(w, h));
@@ -585,7 +590,31 @@ function fitSize(w, h, maxEdge) {
    4. 描画
    ========================================================= */
 let needsRender = false;
-function requestRender() { needsRender = true; }
+let editVersion = 0;
+function requestRender() { needsRender = true; editVersion++; schedulePrepare(); }
+
+// 写真は編集が止まったら裏でフル解像度の保存用画像を作っておく（保存ボタン1回で共有シートを出すため）
+let exportR = null, prepTimer = null, ready = null;   // ready = { version, blob }
+function getExportRenderer() {
+  if (!exportR) exportR = new Renderer(document.createElement('canvas'));
+  return exportR;
+}
+function schedulePrepare() {
+  clearTimeout(prepTimer);
+  if (state.type !== 'image' || state.exporting) return;
+  prepTimer = setTimeout(prepareImage, 500);
+}
+function prepareImage() {
+  return new Promise(resolve => {
+    if (state.type !== 'image') return resolve(null);
+    const v = editVersion, r = getExportRenderer();
+    renderTo(r, state.w, state.h, { time: 0.5 });
+    r.canvas.toBlob(blob => {
+      if (v === editVersion) ready = { version: v, blob };
+      resolve(blob);
+    }, 'image/jpeg', 0.95);
+  });
+}
 
 function drawMain() {
   if (!state.src) return;
@@ -620,6 +649,7 @@ $('file').onchange = e => {
   if (!f) return;
   if (state.src && state.type === 'video') { state.src.pause(); URL.revokeObjectURL(state.src.src); }
   const url = URL.createObjectURL(f);
+  ready = null;
   setStampDate(new Date(f.lastModified || Date.now()));
   if (f.type.startsWith('video/')) loadVideo(url); else loadImage(url);
 };
@@ -634,8 +664,10 @@ function loadImage(url) {
       const c = document.createElement('canvas'); c.width = w; c.height = h;
       c.getContext('2d').drawImage(img, 0, 0, w, h); src = c;
     }
-    setSource('image', src, w, h);
     main.upload(src);
+    getExportRenderer().upload(src);
+    ready = null;
+    setSource('image', src, w, h);
     URL.revokeObjectURL(url);
   };
   img.onerror = () => alert('この画像は開けなかったよ（HEICはSafariで開いてね）');
@@ -848,7 +880,7 @@ function setStamp(on) {
 /* =========================================================
    8. 長押しでオリジナルと比較
    ========================================================= */
-const showOrig = on => { state.showOriginal = on; $('origBadge').style.display = on ? 'block' : 'none'; requestRender(); };
+const showOrig = on => { state.showOriginal = on; $('origBadge').style.display = on ? 'block' : 'none'; needsRender = true; };
 view.addEventListener('pointerdown', () => showOrig(true));
 for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) view.addEventListener(ev, () => showOrig(false));
 view.addEventListener('contextmenu', e => e.preventDefault());
@@ -883,13 +915,16 @@ $('exportBtn').onclick = () => {
 
 function stamp() { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; }
 
-function exportImage() {
-  // フル解像度で描き直してJPEG化
-  renderMain(state.w, state.h, { time: 0.5 });
-  view.toBlob(blob => {
-    requestRender(); // プレビューサイズに戻す
-    showResult(blob, `littlefilm_${stamp()}.jpg`, 'image');
-  }, 'image/jpeg', 0.95);
+async function exportImage() {
+  const name = `littlefilm_${stamp()}.jpg`;
+  if (ready && ready.version === editVersion) {
+    // 準備済み → タップした流れのまま、すぐ共有シート（iPhone）/ ダウンロード（PC）
+    await saveBlob(ready.blob, name, 'image');
+    return;
+  }
+  // まだ準備中だったとき：作ってから「保存する」ボタンで保存
+  const blob = await prepareImage();
+  if (blob) showResult(blob, name, 'image');
 }
 
 let audioCtx, audioSrc, audioDest, recorder, cancelled = false;
@@ -984,7 +1019,7 @@ function showResult(blob, name, kind) {
     ? `<img src="${url}">`
     : `<video src="${url}" controls playsinline loop></video>`;
   const mb = (blob.size / 1024 / 1024).toFixed(1);
-  $('resultNote').textContent = `${name}（${mb}MB）` + (navigator.canShare ? ' ／ iPhoneは「保存する」→「画像を保存 / ビデオを保存」で写真アプリに入るよ' : '');
+  $('resultNote').textContent = `${name}（${mb}MB）`;
   $('resultModal').classList.add('show');
 }
 
@@ -997,18 +1032,35 @@ $('closeResult').onclick = () => {
 
 $('saveResult').onclick = async () => {
   if (!resultBlob) return;
-  const file = new File([resultBlob], resultName, { type: resultBlob.type });
-  // スマホは共有シート（写真アプリに保存できる）、PCはダウンロード
+  const b = resultBlob, n = resultName;
+  $('closeResult').onclick();
+  await saveBlob(b, n, b.type.startsWith('video') ? 'video' : 'image');
+};
+
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// スマホは共有シート（「画像を保存」で写真アプリへ）、PCはそのままダウンロード
+async function saveBlob(blob, name, kind) {
+  const file = new File([blob], name, { type: blob.type });
   const mobile = /iPhone|iPad|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.userAgent));
   if (mobile && navigator.canShare?.({ files: [file] })) {
     try { await navigator.share({ files: [file] }); return; }
-    catch (e) { if (e.name === 'AbortError') return; }
+    catch (e) {
+      if (e.name === 'AbortError') return;
+      // タップから時間が空いて共有できなかったとき
+      showResult(blob, name, kind);
+      return;
+    }
   }
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(resultBlob); a.download = resultName;
+  a.href = URL.createObjectURL(blob); a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-};
+  toast('保存したよ');
+}
 
 /* =========================================================
    起動

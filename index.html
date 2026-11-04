@@ -67,7 +67,7 @@
   .preset .name { font-size: 10px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .preset.add .ph { display: flex; align-items: center; justify-content: center; font-size: 26px; color: var(--sub); border: 1px dashed #444; background: none; }
 
-  #adjustPane, #filmPane, #textPane { display: none; max-height: 34vh; overflow-y: auto; padding: 6px 16px 8px; }
+  #adjustPane, #filmPane, #textPane, #favPane { display: none; max-height: 34vh; overflow-y: auto; padding: 6px 16px 8px; }
   .chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: none; }
   .chips::-webkit-scrollbar { display: none; }
   .chip { flex: 0 0 auto; font-size: 12px; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line); color: #ccc; }
@@ -93,6 +93,16 @@
   .textHint { font-size: 11px; color: var(--sub); margin: 6px 0 2px; }
   #delText { font-size: 12px; color: #e66; padding: 6px 0; }
   #textEditor[hidden] { display: none; }
+  .tabs { gap: 18px; }
+  #favAdd { width: 100%; padding: 11px; border-radius: 10px; border: 1px dashed #555; font-size: 13px; color: #ddd; }
+  #favList { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 12px; padding-top: 12px; }
+  .fav { position: relative; text-align: center; }
+  .fav img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; display: block; background: #222; }
+  .fav .nm { font-size: 11px; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fav .del { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; background: rgba(0,0,0,.65); font-size: 12px; line-height: 22px; }
+  .favEmpty { font-size: 12px; color: var(--sub); text-align: center; padding: 14px 0 4px; line-height: 1.7; }
+  .favOpt { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #ccc; justify-content: center; margin-top: 12px; }
+  .favOpt input { width: 18px; height: 18px; accent-color: #fff; }
   .adj { display: grid; grid-template-columns: 84px 1fr 38px; align-items: center; gap: 10px; padding: 7px 0; }
   .adj label { font-size: 12px; color: #ccc; }
   .adj .val { font-size: 12px; text-align: right; color: var(--sub); font-variant-numeric: tabular-nums; }
@@ -151,6 +161,7 @@
       <button class="tab" data-tab="adjust">調整</button>
       <button class="tab" data-tab="film">フィルム</button>
       <button class="tab" data-tab="text">文字</button>
+      <button class="tab" data-tab="fav">★</button>
     </div>
     <div id="presetPane">
       <div id="strengthRow">
@@ -182,6 +193,10 @@
         <input type="date" id="stampDate" disabled>
       </div>
       <div class="ver" style="font-size:10px;color:#555;text-align:right;padding-top:8px"></div>
+    </div>
+    <div id="favPane">
+      <button id="favAdd">★ 今の加工をお気に入りに保存</button>
+      <div id="favList"></div>
     </div>
     <div id="textPane">
       <div class="chips" id="textChips"></div>
@@ -231,8 +246,9 @@
 <!-- プリセット名入力 -->
 <div class="modal" id="nameModal">
   <div class="card">
-    <h3>プリセットの名前</h3>
+    <h3 id="nameTitle">プリセットの名前</h3>
     <input type="text" id="presetName" maxlength="16" placeholder="例: My Cafe">
+    <label class="favOpt" id="favTextOpt"><input type="checkbox" id="favWithText" checked>入れた文字も一緒に保存</label>
     <div class="row">
       <button id="cancelName">やめる</button>
       <button class="primary" id="okName">保存</button>
@@ -242,7 +258,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 1.9';
+const APP_VERSION = 'ver 2.0';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -883,6 +899,7 @@ function buildAdjust() {
     input.ondblclick = () => set(0);          // ダブルタップで0に戻す
     row.querySelector('label').onclick = () => set(0);
     row._set = set;
+    row._key = a.key;
     list.appendChild(row);
   }
 }
@@ -895,14 +912,30 @@ for (const t of document.querySelectorAll('.tab')) {
     $('adjustPane').style.display = t.dataset.tab === 'adjust' ? 'block' : 'none';
     $('filmPane').style.display = t.dataset.tab === 'film' ? 'block' : 'none';
     $('textPane').style.display = t.dataset.tab === 'text' ? 'block' : 'none';
+    $('favPane').style.display = t.dataset.tab === 'fav' ? 'block' : 'none';
     state.tab = t.dataset.tab;
   };
 }
 
 // 今の色味（プリセット×強さ＋調整）をマイプリセットとして保存
-$('savePresetBtn').onclick = () => { $('presetName').value = ''; $('nameModal').classList.add('show'); setTimeout(() => $('presetName').focus(), 50); };
+let nameMode = 'preset';
+function openNameModal(mode) {
+  nameMode = mode;
+  $('nameTitle').textContent = mode === 'fav' ? 'お気に入りの名前' : 'プリセットの名前';
+  $('presetName').placeholder = mode === 'fav' ? '例: パリの朝' : '例: My Cafe';
+  $('favTextOpt').style.display = mode === 'fav' && state.texts.some(t => t.text.trim()) ? '' : 'none';
+  $('presetName').value = '';
+  $('nameModal').classList.add('show');
+  setTimeout(() => $('presetName').focus(), 50);
+}
+$('savePresetBtn').onclick = () => openNameModal('preset');
 $('cancelName').onclick = () => $('nameModal').classList.remove('show');
 $('okName').onclick = () => {
+  if (nameMode === 'fav') {
+    saveFavorite($('presetName').value.trim() || 'お気に入り' + (favorites.length + 1), $('favWithText').checked);
+    $('nameModal').classList.remove('show');
+    return;
+  }
   const name = $('presetName').value.trim() || 'My Preset';
   const n = customPresets.length + 1;
   const p = { id: 'U' + Date.now(), code: 'MY' + n, name, custom: true, p: effectiveParams() };
@@ -914,6 +947,78 @@ $('okName').onclick = () => {
   document.querySelector('.tab[data-tab=preset]').click();
   document.querySelector(`.preset[data-id="${p.id}"]`)?.scrollIntoView({ inline: 'center', behavior: 'smooth' });
 };
+
+/* =========================================================
+   7.4 お気に入り（色味・調整・フィルム・文字をまるごと保存）
+   ========================================================= */
+const FAV_KEY = 'littlefilm.favorites.v1';
+let favorites = (() => { try { return JSON.parse(localStorage.getItem(FAV_KEY)) || []; } catch { return []; } })();
+function saveFavs() {
+  try { localStorage.setItem(FAV_KEY, JSON.stringify(favorites)); }
+  catch { alert('保存できる量がいっぱいみたい。いらないお気に入りを消してね'); }
+}
+
+function favThumb() {
+  // 今のプレビューを小さな正方形にして保存
+  const S = 160, c = document.createElement('canvas'); c.width = c.height = S;
+  if (state.src) {
+    drawMain();
+    const w = view.width, h = view.height, m = Math.min(w, h);
+    c.getContext('2d').drawImage(view, (w - m) / 2, (h - m) / 2, m, m, 0, 0, S, S);
+  }
+  return c.toDataURL('image/jpeg', 0.8);
+}
+
+function saveFavorite(name, withText) {
+  const { date, ...film } = state.film;   // 日付は写真ごとに違うので保存しない
+  favorites.unshift({
+    id: 'F' + Date.now(), name, thumb: favThumb(),
+    presetId: state.presetId, strength: state.strength,
+    adj: { ...state.adj }, film,
+    texts: withText ? JSON.parse(JSON.stringify(state.texts)) : null,
+  });
+  saveFavs(); buildFavList();
+  toast(`「${name}」をお気に入りに保存したよ`);
+}
+
+function applyFavorite(f) {
+  // 色味
+  const exists = allPresets().some(p => p.id === f.presetId);
+  selectPreset(exists ? f.presetId : 'OR');
+  state.strength = f.strength; updateStrengthUI();
+  for (const r of $('adjList').children) r._set(Math.round((f.adj[r._key] || 0) * 100));
+  // フィルム
+  for (const r of $('filmList').children) r._set(Math.round((f.film[r._key] || 0) * 100), true);
+  for (const c of $('filmChips').children) c.classList.remove('on');
+  state.film.leakPos = f.film.leakPos || 0;
+  for (const x of $('leakPos').children) x.classList.toggle('on', +x.dataset.v === state.film.leakPos);
+  setStamp(!!f.film.stamp);
+  // 文字
+  if (f.texts) { state.texts = JSON.parse(JSON.stringify(f.texts)); state.selText = state.texts.length - 1; state.texts.forEach(loadFont); refreshTextUI(); }
+  requestRender();
+  toast(`「${f.name}」を適用したよ`);
+}
+
+function buildFavList() {
+  const list = $('favList');
+  list.innerHTML = '';
+  if (!favorites.length) {
+    list.innerHTML = '<div class="favEmpty" style="grid-column:1/-1">お気に入りはまだないよ<br>好きな加工ができたら上のボタンで保存してね</div>';
+    return;
+  }
+  for (const f of favorites) {
+    const el = document.createElement('div');
+    el.className = 'fav';
+    el.innerHTML = `<button class="pick" style="width:100%"><img src="${f.thumb}" alt=""><div class="nm">${esc(f.name)}${f.texts ? ' ✎' : ''}</div></button><button class="del" aria-label="削除">✕</button>`;
+    el.querySelector('.pick').onclick = () => { if (state.src) applyFavorite(f); else alert('先に写真か動画を開いてね'); };
+    el.querySelector('.del').onclick = () => {
+      if (!confirm(`「${f.name}」を削除する？`)) return;
+      favorites = favorites.filter(x => x.id !== f.id); saveFavs(); buildFavList();
+    };
+    list.appendChild(el);
+  }
+}
+$('favAdd').onclick = () => { if (!state.src) return alert('先に写真か動画を開いて加工してね'); openNameModal('fav'); };
 
 /* =========================================================
    7.5 フィルムタブ
@@ -1290,6 +1395,7 @@ buildPresetStrip();
 buildAdjust();
 buildFilm();
 buildTextUI();
+buildFavList();
 updateStrengthUI();
 </script>
 </body>

@@ -242,13 +242,14 @@ const BUILTIN_PRESETS = [
 const STORE_KEY = 'colorstudio.customPresets.v1';
 
 /* フィルムカメラ風エフェクト */
-const FILM_KEYS = ['leak', 'leakPos', 'halation', 'dust', 'border'];
+const FILM_KEYS = ['leak', 'leakPos', 'halation', 'dust', 'border', 'frame'];
 const FILM_SLIDERS = [
   { key: 'leak',     label: '光漏れ' },
   { key: 'halation', label: 'ハレーション' },
   { key: 'dust',     label: 'ほこり・傷' },
   { key: 'grain',    label: 'フィルム粒子' },
-  { key: 'border',   label: 'フチ' },
+  { key: 'frame',    label: 'レトロ枠' },
+  { key: 'border',   label: '白フチ' },
 ];
 const FILM_RECIPES = [
   { name: 'なし',         f: {} },
@@ -256,6 +257,7 @@ const FILM_RECIPES = [
   { name: 'シネマ',       f: { halation: .65, dust: .15, grain: .25 } },
   { name: 'インスタント',   f: { leak: .2,  halation: .25, grain: .2, border: .7 } },
   { name: 'ヴィンテージ',   f: { leak: .25, halation: .3,  dust: .7,  grain: .45, stamp: true } },
+  { name: 'ネガ',         f: { halation: .2, dust: .35, grain: .55, frame: .35 } },
 ];
 let customPresets = loadCustom();
 function loadCustom() { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || []; } catch { return []; } }
@@ -282,10 +284,11 @@ uniform float u_hiDesat;
 uniform sampler2D u_stamp;
 uniform vec2 u_res;
 uniform float u_seed, u_anim;
-uniform float u_leak, u_leakPos, u_halation, u_dust, u_border, u_stampOn;
+uniform float u_leak, u_leakPos, u_halation, u_dust, u_border, u_frame, u_stampOn;
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
-float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+// スマホのGPUでも縞模様が出ないように、値を小さく保つハッシュ
+float hash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float vnoise(vec2 p) {
   vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
@@ -372,8 +375,30 @@ void main() {
     }
   }
 
-  float n = hash(gl_FragCoord.xy + fract(u_time) * 100.0) - 0.5;
-  c += n * u_grain * 0.18;                                     // 粒子
+  vec2 resIn = u_res * (1.0 - mLo - mHi);                      // 写真部分のピクセルサイズ
+  vec2 pin = uv * resIn;
+
+  if (u_grain > 0.0) {                                         // 粒子（フィルムっぽい柔らかい粒）
+    vec2 gp = pin * (900.0 / min(resIn.x, resIn.y));           // 解像度に関係なく短辺に約900粒
+    vec2 so = vec2(hash(vec2(u_seed, 1.7)), hash(vec2(u_seed, 8.3))) * 400.0;
+    float g = (vnoise(gp + so) - 0.5) * 0.7 + (vnoise(gp * 2.3 + so + 31.0) - 0.5) * 0.5;
+    vec3 gcol = vec3(vnoise(gp * 1.4 + so + 7.0), vnoise(gp * 1.4 + so + 13.0), vnoise(gp * 1.4 + so + 19.0)) - 0.5;
+    l = clamp(luma(c), 0.0, 1.0);
+    float lw = 0.4 + 2.4 * l * (1.0 - l);                      // 中間の明るさに一番乗る
+    c += (vec3(g) + gcol * 0.22) * u_grain * 0.32 * lw;
+  }
+
+  if (u_frame > 0.0) {                                         // レトロな細い黒フチ（ネガっぽいガタガタの縁）
+    float mn = min(resIn.x, resIn.y);
+    float fw = u_frame * 0.03 * mn;
+    vec2 q = pin - resIn * 0.5;
+    float rc = fw * 0.9;
+    vec2 e = abs(q) - (resIn * 0.5 - fw) + rc;
+    float d = length(max(e, 0.0)) + min(max(e.x, e.y), 0.0) - rc;
+    d += (vnoise(pin / mn * 40.0) - 0.5) * fw * 0.18 + (vnoise(pin / mn * 400.0) - 0.5) * fw * 0.22;
+    float a = smoothstep(-1.0, 1.0, d);
+    c = mix(c, vec3(0.035) + (hash(pin) - 0.5) * 0.03, a);
+  }
 
   if (u_stampOn > 0.5) {                                       // 日付スタンプ
     vec4 st = texture2D(u_stamp, v_uv);
@@ -482,7 +507,7 @@ const state = {
   adj: Object.fromEntries(KEYS.map(k => [k, 0])),
   showOriginal: false,
   exporting: false,
-  film: { leak: 0, leakPos: 0, halation: 0, dust: 0, grain: 0, border: 0, stamp: false, date: '' },
+  film: { leak: 0, leakPos: 0, halation: 0, dust: 0, grain: 0, border: 0, frame: 0, stamp: false, date: '' },
 };
 
 function currentPreset() { return allPresets().find(p => p.id === state.presetId) || allPresets()[0]; }
@@ -516,18 +541,19 @@ function stampText() {
 function ensureStamp(w, h) {
   const f = state.film;
   if (!f.stamp) return;
-  const key = [w, h, f.date, f.border].join('|');
+  const key = [w, h, f.date, f.border, f.frame].join('|');
   if (key === stampKey) return;
   stampKey = key;
   stampCanvas.width = w; stampCanvas.height = h;
   const g = stampCanvas.getContext('2d');
   g.clearRect(0, 0, w, h);
   const bpx = f.border * 0.07 * Math.min(w, h);
+  const fpx = f.frame * 0.03 * Math.min(w - bpx * 2, h - bpx * 3.2);   // レトロ枠の内側に入れる
   const fs = Math.round(Math.min(w, h) * 0.045);
   g.font = `700 ${fs}px "Courier New", ui-monospace, Menlo, monospace`;
   g.textAlign = 'right';
   g.textBaseline = 'alphabetic';
-  const x = w - bpx - fs * 1.0, y = h - bpx * 2.2 - fs * 0.8, t = stampText();
+  const x = w - bpx - fpx - fs * 1.0, y = h - bpx * 2.2 - fpx - fs * 0.8, t = stampText();
   g.shadowColor = 'rgba(255, 70, 0, 0.95)';
   g.shadowBlur = fs * 0.6;
   g.fillStyle = 'rgba(255, 140, 50, 0.9)';

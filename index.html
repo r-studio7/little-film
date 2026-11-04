@@ -262,7 +262,8 @@
           <div class="chips" id="bgChips"></div>
         </div>
         <div id="panOpts">
-          <div class="adj"><label>写真の位置</label><input type="range" id="panR" min="-100" max="100" step="1" value="0"><span class="val" id="panV">0</span></div>
+          <p class="textHint" style="margin:2px 0 6px">写真を指でドラッグすると好きな位置にずらせるよ。2本指でつまむと拡大・縮小</p>
+          <div class="adj"><label>ズーム</label><input type="range" id="zoomR" min="100" max="400" step="1" value="100"><span class="val" id="zoomV">100</span></div>
         </div>
         <div id="capOpts">
           <div class="colorLbl">上の小さい文字</div>
@@ -351,7 +352,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 2.7';
+const APP_VERSION = 'ver 2.8';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -710,7 +711,7 @@ const state = {
   texts: [],           // { text, font, size, color, alpha, x, y }
   geo: { angle: 0, v: 0, h: 0, rot: 0, flip: false },
   layout: { size: 'none', style: 'simple', pad: 0.06, bg: '#ffffff',
-            pan: 0,
+            cx: 0.5, cy: 0.5, zoom: 1,   // 写真いっぱい：枠の真ん中に来る写真の位置と拡大率
             cap: { ...CAP_DEFAULT } },
   layoutRect: null,    // 出来上がり画像の中で写真がある位置
   dropper: null,       // スポイトで色を入れる先：'text' | 'bg' | 'cap'
@@ -930,10 +931,12 @@ function composeLayout(g, src, W, H) {
     px = (W - pw) / 2; py = (H - ph) / 2;
   } else {
     // 写真を枠いっぱいに（はみ出た分は切り取り、「写真の位置」でずらせる）
-    const sc = Math.max(W / src.width, H / src.height);
+    const sc = Math.max(W / src.width, H / src.height) * (L.zoom || 1);
     pw = src.width * sc; ph = src.height * sc;
-    const k = (1 - (L.pan || 0)) / 2;
-    px = (W - pw) * k; py = (H - ph) * k;
+    // 枠からはみ出さない範囲でずらす（はみ出す分は位置を戻しておく）
+    px = Math.min(0, Math.max(W - pw, W / 2 - (L.cx ?? 0.5) * pw));
+    py = Math.min(0, Math.max(H - ph, H / 2 - (L.cy ?? 0.5) * ph));
+    L.cx = (W / 2 - px) / pw; L.cy = (H / 2 - py) / ph;
   }
   g.drawImage(src, px, py, pw, ph);
   if (L.style === 'postcard') drawPostcardTitle(g, W, H);
@@ -991,6 +994,7 @@ $('file').onchange = e => {
   ready = null;
   setStampDate(new Date(f.lastModified || Date.now()));
   resetGeo(true);
+  Object.assign(state.layout, { cx: 0.5, cy: 0.5, zoom: 1 });
   if (f.type.startsWith('video/')) loadVideo(url); else loadImage(url);
 };
 
@@ -1225,7 +1229,7 @@ function applyFavorite(f) {
   for (const x of $('leakPos').children) x.classList.toggle('on', +x.dataset.v === state.film.leakPos);
   setStamp(!!f.film.stamp);
   // インスタ用レイアウト
-  if (f.layout) { state.layout = JSON.parse(JSON.stringify(f.layout)); setLayout({}); }
+  if (f.layout) { state.layout = { ...JSON.parse(JSON.stringify(f.layout)), cx: 0.5, cy: 0.5 }; setLayout({}); }
   // 文字
   if (f.texts) { state.texts = JSON.parse(JSON.stringify(f.texts)); state.selText = state.texts.length - 1; state.texts.forEach(loadFont); refreshTextUI(); }
   requestRender();
@@ -1438,7 +1442,7 @@ function refreshLayoutUI() {
   st.appendChild(chip('✉ Postcards from', L.style === 'postcard', () => setLayout({ style: 'postcard' })));
   $('bgOpts').style.display = L.style === 'simple' ? '' : 'none';
   $('panOpts').style.display = L.style === 'simple' ? 'none' : '';
-  $('panR').value = Math.round((L.pan || 0) * 100); $('panV').textContent = Math.round((L.pan || 0) * 100);
+  const zm = Math.round((L.zoom || 1) * 100); $('zoomR').value = zm; $('zoomV').textContent = zm;
   $('padR').value = +(L.pad * 100).toFixed(1); $('padV').textContent = +(L.pad * 100).toFixed(1);
   colorRow($('bgChips'), LAYOUT_BGS, L.bg, c => setLayout({ bg: c }), 'bg');
   $('capOpts').style.display = L.style === 'postcard' ? '' : 'none';
@@ -1466,7 +1470,7 @@ function buildLayoutUI() {
   $('capPlace').oninput = e => { state.layout.cap.place = e.target.value; setLayout({}); };
   $('capY').oninput = e => { state.layout.cap.y = e.target.value / 100; $('capYV').textContent = e.target.value; requestRender(); };
   $('capShadow').oninput = e => { state.layout.cap.shadow = e.target.value / 100; $('capShadowV').textContent = e.target.value; requestRender(); };
-  $('panR').oninput = e => { state.layout.pan = e.target.value / 100; $('panV').textContent = e.target.value; requestRender(); };
+  $('zoomR').oninput = e => { state.layout.zoom = e.target.value / 100; $('zoomV').textContent = e.target.value; requestRender(); };
   $('capSize').oninput = e => { state.layout.cap.size = +e.target.value; $('capSizeV').textContent = e.target.value; requestRender(); };
   refreshLayoutUI();
 }
@@ -1695,11 +1699,36 @@ function applyDropper(color) {
 let dropping = false;
 
 let dragOff = [0, 0];
+// 写真いっぱい／Postcards from：ドラッグで位置、2本指で拡大
+const panPts = new Map();
+let pinch = null;
+function panning() { return state.tab === 'layout' && layoutOn() && state.layout.style !== 'simple'; }
+function panMove(e) {
+  const prev = panPts.get(e.pointerId); if (!prev) return;
+  panPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const L = state.layout, lv = $('layoutView'), k = lv.width / lv.getBoundingClientRect().width, q = state.layoutRect;
+  if (panPts.size >= 2 && pinch) {
+    const [a, b] = [...panPts.values()];
+    L.zoom = Math.min(4, Math.max(1, pinch.zoom * Math.hypot(a.x - b.x, a.y - b.y) / pinch.dist));
+    const zm = Math.round(L.zoom * 100); $('zoomR').value = zm; $('zoomV').textContent = zm;
+  } else if (q) {
+    L.cx -= (e.clientX - prev.x) * k / q.w;
+    L.cy -= (e.clientY - prev.y) * k / q.h;
+  }
+  requestRender();
+}
+
 function onSurfaceDown(e) {
   const surf = e.currentTarget;
   if (state.dropper) {
     dropping = true; surf.setPointerCapture(e.pointerId);
     showLoupe(e, sampleAt(e));
+    return;
+  }
+  if (panning()) {
+    surf.setPointerCapture(e.pointerId);
+    panPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (panPts.size === 2) { const [a, b] = [...panPts.values()]; pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, zoom: state.layout.zoom || 1 }; }
     return;
   }
   if (state.tab === 'text' && state.texts.length) {
@@ -1724,6 +1753,7 @@ for (const surf of [view, $('layoutView')]) {
   surf.addEventListener('pointerdown', onSurfaceDown);
   surf.addEventListener('pointermove', e => {
     if (dropping) { showLoupe(e, sampleAt(e)); return; }
+    if (panPts.has(e.pointerId)) { panMove(e); return; }
     if (dragging) { const [x, y] = pointerPos(e); moveText(x + dragOff[0], y + dragOff[1]); }
   });
   surf.addEventListener('pointerup', e => {
@@ -1735,8 +1765,9 @@ for (const surf of [view, $('layoutView')]) {
       document.querySelectorAll('.dropBtn').forEach(b => b.classList.remove('on'));
     }
   });
-  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) surf.addEventListener(ev, () => {
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) surf.addEventListener(ev, e => {
     if (ev !== 'pointerup' && dropping) { dropping = false; $('loupe').style.display = 'none'; }
+    panPts.delete(e.pointerId); if (panPts.size < 2) pinch = null;
     dragging = false; showOrig(false);
   });
   surf.addEventListener('contextmenu', e => e.preventDefault());

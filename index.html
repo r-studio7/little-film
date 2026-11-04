@@ -14,7 +14,7 @@
 <title>R's Little Film</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=BIZ+UDGothic&family=Shippori+Mincho:wght@400;500&family=Klee+One&family=Zen+Kaku+Gothic+New:wght@400;500&family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400;1,500;1,600;1,700&family=Arimo:wght@400;500&family=Bodoni+Moda:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=BIZ+UDGothic&family=Shippori+Mincho:wght@400;500&family=Klee+One&family=Zen+Kaku+Gothic+New:wght@400;500&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600;1,700&family=Arimo:wght@400;500&family=Bodoni+Moda:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #111; --panel: #1a1a1a; --line: #2a2a2a; --text: #eee; --sub: #888; --accent: #f2f2f2;
@@ -358,7 +358,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 3.2';
+const APP_VERSION = 'ver 3.3';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -406,7 +406,7 @@ const TITLE_TEMPLATES = [
   { id: 'postcards', name: '✉ Postcards from', caseFn: s => s.toUpperCase(),
     cap: { top: 'POSTCARDS FROM', font: 'didone', topFont: 'didone', topWeight: 600, topSpace: 22, placeSpace: 7, topRatio: 0.34, size: 11 } },
   { id: 'love', name: '♡ A love letter to', caseFn: s => s.toLowerCase().replace(/(^|[\s-])\S/g, m => m.toUpperCase()),
-    cap: { top: 'a love letter to', font: 'didone', topFont: 'serif', topWeight: 700, topSpace: 0, placeSpace: 3, topRatio: 0.42, size: 13 } },
+    cap: { top: 'a love letter to', font: 'didone', topFont: 'diaryS', topWeight: 700, topSpace: 0, placeSpace: 3, topRatio: 0.55, size: 13 } },
 ];
 
 /* フィルムカメラ風エフェクト */
@@ -1008,7 +1008,7 @@ function drawPostcardTitle(g, W, H) {
   g.textBaseline = 'middle';
   if (c.shadow) { g.shadowColor = `rgba(0,0,0,${0.45 * c.shadow})`; g.shadowBlur = big * 0.3 * c.shadow; g.shadowOffsetY = big * 0.03; }
   const top = c.top.trim(), place = c.place.trim();
-  const gap = top && place ? big * 0.22 : 0;
+  const gap = top && place ? big * 0.14 + small * 0.3 : 0;
   const total = (top ? small : 0) + gap + (place ? big * 0.8 : 0);
   let y = cy - total / 2;
   if (top) {

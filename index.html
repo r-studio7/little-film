@@ -376,7 +376,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 3.6';
+const APP_VERSION = 'ver 3.7';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -766,12 +766,18 @@ function effectiveParams(preset = currentPreset(), strength = state.strength, ad
 }
 
 // メイン画面用：色味 + フィルム効果
+// 「写真いっぱい／タイトル入り」は切り取ってから外側に枠を付けるので、写真そのものには付けない
+function edgesOnLayout() { return layoutOn() && state.layout.style !== 'simple'; }
+function photoFilm() {
+  return edgesOnLayout() ? { ...state.film, frame: 0, border: 0, stamp: false } : state.film;
+}
 function mainParams() {
   const p = effectiveParams();
+  const film = photoFilm();
   p.grain += state.film.grain;
-  p.film = state.film;
+  p.film = film;
   p.geo = state.geo;
-  p.overlayOn = state.film.stamp || state.texts.some(t => t.text.trim());
+  p.overlayOn = film.stamp || state.texts.some(t => t.text.trim());
   return p;
 }
 
@@ -783,7 +789,7 @@ function stampText() {
 }
 // 日付スタンプと文字を1枚の透明キャンバスにまとめて描いて、写真に重ねる
 function ensureStamp(r, w, h) {
-  const f = state.film;
+  const f = photoFilm();
   const texts = state.texts.filter(t => t.text.trim());
   if (!f.stamp && !texts.length) return;
   const key = [w, h, f.stamp, f.date, f.border, f.frame, fontsVersion, JSON.stringify(texts)].join('|');
@@ -793,7 +799,7 @@ function ensureStamp(r, w, h) {
   const g = stampCanvas.getContext('2d');
   g.clearRect(0, 0, w, h);
   for (const t of texts) drawText(g, t, w, h);
-  if (f.stamp) drawDateStamp(g, w, h);
+  if (f.stamp) drawDateStamp(g, w, h, f);
   r.uploadStamp(stampCanvas);
 }
 
@@ -851,8 +857,7 @@ function textBox(t) {
   return { w: bw / W, h: lines.length * px * 1.35 / H };
 }
 
-function drawDateStamp(g, w, h) {
-  const f = state.film;
+function drawDateStamp(g, w, h, f = state.film) {
   g.save();
   const bpx = f.border * 0.07 * Math.min(w, h);
   const fpx = f.frame * 0.03 * Math.min(w - bpx * 2, h - bpx * 3.2);   // レトロ枠の内側に入れる
@@ -978,17 +983,64 @@ function composeLayout(g, src, W, H) {
     pw = src.width * sc; ph = src.height * sc;
     px = (W - pw) / 2; py = (H - ph) / 2;
   } else {
-    // 写真を枠いっぱいに（はみ出た分は切り取り、「写真の位置」でずらせる）
-    const sc = Math.max(W / src.width, H / src.height) * (L.zoom || 1);
+    // 写真を枠いっぱいに（はみ出た分は切り取り、ドラッグでずらせる）
+    // 白フチがあるときは、フチの内側いっぱいに
+    const f = state.film, bpx = f.border * 0.07 * Math.min(W, H);
+    const ix = bpx, iy = bpx, iw = W - 2 * bpx, ih = H - bpx * 3.2;
+    if (bpx) { g.fillStyle = '#f6f4ed'; g.fillRect(0, 0, W, H); }
+    const sc = Math.max(iw / src.width, ih / src.height) * (L.zoom || 1);
     pw = src.width * sc; ph = src.height * sc;
     // 枠からはみ出さない範囲でずらす（はみ出す分は位置を戻しておく）
-    px = Math.min(0, Math.max(W - pw, W / 2 - (L.cx ?? 0.5) * pw));
-    py = Math.min(0, Math.max(H - ph, H / 2 - (L.cy ?? 0.5) * ph));
-    L.cx = (W / 2 - px) / pw; L.cy = (H / 2 - py) / ph;
+    px = Math.min(ix, Math.max(ix + iw - pw, ix + iw / 2 - (L.cx ?? 0.5) * pw));
+    py = Math.min(iy, Math.max(iy + ih - ph, iy + ih / 2 - (L.cy ?? 0.5) * ph));
+    L.cx = (ix + iw / 2 - px) / pw; L.cy = (iy + ih / 2 - py) / ph;
+    g.save(); g.beginPath(); g.rect(ix, iy, iw, ih); g.clip();
+    g.drawImage(src, px, py, pw, ph);
+    if (f.frame) drawRetroFrame(g, ix, iy, iw, ih, f.frame);
+    g.restore();
+    if (L.style === 'postcard') drawPostcardTitle(g, W, H);
+    if (f.stamp) drawDateStamp(g, W, H, f);
+    return { x: px, y: py, w: pw, h: ph };
   }
   g.drawImage(src, px, py, pw, ph);
-  if (L.style === 'postcard') drawPostcardTitle(g, W, H);
   return { x: px, y: py, w: pw, h: ph };
+}
+
+// レトロ枠を出来上がり画像の端に描く（写真に付けるときと同じ見た目：角が少し丸く、ふちがガタガタ）
+const frameCache = new Map();
+function drawRetroFrame(g, x, y, w, h, amount) {
+  const key = [x, y, w, h, amount].map(v => Math.round(v * 100)).join('|');
+  let path = frameCache.get(key);
+  if (!path) {
+    if (frameCache.size > 8) frameCache.clear();
+    const mn = Math.min(w, h), fw = amount * 0.03 * mn, rc = fw * 0.9;
+    const x0 = x + fw, y0 = y + fw, x1 = x + w - fw, y1 = y + h - fw;
+    // 決まった乱数（毎回同じガタガタになるように）
+    let seed = 7;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const low = Array.from({ length: 64 }, rnd), hi = Array.from({ length: 4096 }, rnd);
+    const smooth = (arr, t) => { const i = Math.floor(t), f = t - i, a = arr[i % arr.length], b = arr[(i + 1) % arr.length]; return a + (b - a) * f * f * (3 - 2 * f); };
+    // 角の丸い四角のふちを一周する点
+    const pts = [], step = Math.max(1.5, mn / 500);
+    const seg = (ax, ay, bx, by) => { const L = Math.hypot(bx - ax, by - ay), n = Math.max(1, Math.round(L / step)); for (let i = 0; i < n; i++) pts.push([ax + (bx - ax) * i / n, ay + (by - ay) * i / n]); };
+    const arc = (cx, cy, a0) => { for (let i = 0; i < 8; i++) { const a = a0 + Math.PI / 2 * i / 8; pts.push([cx + Math.cos(a) * rc, cy + Math.sin(a) * rc]); } };
+    seg(x0 + rc, y0, x1 - rc, y0); arc(x1 - rc, y0 + rc, -Math.PI / 2);
+    seg(x1, y0 + rc, x1, y1 - rc); arc(x1 - rc, y1 - rc, 0);
+    seg(x1 - rc, y1, x0 + rc, y1); arc(x0 + rc, y1 - rc, Math.PI / 2);
+    seg(x0, y1 - rc, x0, y0 + rc); arc(x0 + rc, y0 + rc, Math.PI);
+    const cxm = x + w / 2, cym = y + h / 2;
+    path = new Path2D();
+    path.rect(x, y, w, h);
+    pts.forEach(([px, py], i) => {
+      const d = (smooth(low, i * 40 / pts.length * 1.6) - 0.5) * fw * 0.18 + (smooth(hi, i * 0.9) - 0.5) * fw * 0.24;
+      const vx = px - cxm, vy = py - cym, vl = Math.hypot(vx, vy) || 1;   // 内側・外側にずらす
+      const qx = px - vx / vl * d, qy = py - vy / vl * d;
+      i ? path.lineTo(qx, qy) : path.moveTo(qx, qy);
+    });
+    path.closePath();
+    frameCache.set(key, path);
+  }
+  g.save(); g.fillStyle = '#090909'; g.fill(path, 'evenodd'); g.restore();
 }
 
 // 写真の上に「POSTCARDS FROM（小）」＋「地名（大）」をメリハリつけて描く

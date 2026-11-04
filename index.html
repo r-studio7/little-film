@@ -301,6 +301,7 @@
           <input type="text" id="capPlace" maxlength="20" class="capIn">
           <div class="chips" id="capFonts" style="padding-top:10px"></div>
           <div class="adj"><label>全体の大きさ</label><input type="range" id="capSize" min="5" max="20" step="0.25" value="11"><span class="val" id="capSizeV">11</span></div>
+          <div class="adj"><label>地名の大きさ</label><input type="range" id="capPlaceSize" min="50" max="200" step="1" value="100"><span class="val" id="capPlaceSizeV">100</span></div>
           <div class="adj"><label>上の大きさ</label><input type="range" id="capTopSize" min="20" max="80" step="1" value="34"><span class="val" id="capTopSizeV">34</span></div>
           <div class="colorLbl">上の小さい文字の太さ</div>
           <div class="chips" id="capWeights"></div>
@@ -387,7 +388,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 3.9';
+const APP_VERSION = 'ver 4.0';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -433,9 +434,9 @@ const CAP_DEFAULT = { top: 'POSTCARDS FROM', place: 'PARIS', font: 'didone', col
 // タイトルのテンプレート（地名は入れたものを引き継いで、大文字／頭だけ大文字に整える）
 const TITLE_TEMPLATES = [
   { id: 'postcards', name: '✉ Postcards from', caseFn: s => s.toUpperCase(),
-    cap: { top: 'POSTCARDS FROM', font: 'didone', topFont: 'didone', topWeight: 600, topSpace: 22, placeSpace: 7, topRatio: 0.34, size: 11 } },
+    cap: { top: 'POSTCARDS FROM', font: 'didone', topFont: 'didone', topWeight: 600, topSpace: 22, placeSpace: 7, topRatio: 0.34, size: 11, placeScale: 1 } },
   { id: 'love', name: '♡ A love letter to', caseFn: s => s.toLowerCase().replace(/(^|[\s-])\S/g, m => m.toUpperCase()),
-    cap: { top: 'a love letter to', font: 'didone', topFont: 'diaryS', topWeight: 700, topSpace: 0, placeSpace: 3, topRatio: 0.55, size: 13 } },
+    cap: { top: 'a love letter to', font: 'didone', topFont: 'diaryS', topWeight: 700, topSpace: 0, placeSpace: 3, topRatio: 0.55, size: 13, placeScale: 1 } },
 ];
 
 /* フィルムカメラ風エフェクト */
@@ -1086,7 +1087,8 @@ function drawOptical(g, text, cx, y, gap) {
 
 function drawPostcardTitle(g, W, H) {
   const c = { ...CAP_DEFAULT, ...state.layout.cap };
-  const big = W * c.size / 100, small = big * (c.topRatio || 0.34);
+  const base = W * c.size / 100;
+  const big = base * (c.placeScale || 1), small = base * (c.topRatio || 0.34);   // 地名と上の行は別々に大きさを変えられる
   const cy = H * c.y;
   g.save();
   g.fillStyle = c.color;
@@ -1802,6 +1804,7 @@ function refreshLayoutUI() {
   if (document.activeElement !== $('capPlace')) $('capPlace').value = L.cap.place;
   $('capY').value = Math.round(L.cap.y * 100); $('capYV').textContent = Math.round(L.cap.y * 100);
   $('capShadow').value = Math.round(L.cap.shadow * 100); $('capShadowV').textContent = Math.round(L.cap.shadow * 100);
+  const ps = Math.round((L.cap.placeScale || 1) * 100); $('capPlaceSize').value = ps; $('capPlaceSizeV').textContent = ps;
   const tr = Math.round((L.cap.topRatio || 0.34) * 100); $('capTopSize').value = tr; $('capTopSizeV').textContent = tr;
   $('capTopSp').value = L.cap.topSpace; $('capTopSpV').textContent = L.cap.topSpace;
   $('capPlaceSp').value = L.cap.placeSpace; $('capPlaceSpV').textContent = L.cap.placeSpace;
@@ -1833,6 +1836,7 @@ function buildLayoutUI() {
   $('capTop').oninput = e => { state.layout.cap.top = e.target.value; setLayout({}); };
   $('capPlace').oninput = e => { state.layout.cap.place = e.target.value; setLayout({}); };
   $('capY').oninput = e => { state.layout.cap.y = e.target.value / 100; $('capYV').textContent = e.target.value; requestRender(); };
+  $('capPlaceSize').oninput = e => { state.layout.cap.placeScale = e.target.value / 100; $('capPlaceSizeV').textContent = e.target.value; requestRender(); };
   $('capTopSize').oninput = e => { state.layout.cap.topRatio = e.target.value / 100; $('capTopSizeV').textContent = e.target.value; requestRender(); };
   $('capTopSp').oninput = e => { state.layout.cap.topSpace = +e.target.value; $('capTopSpV').textContent = e.target.value; requestRender(); };
   $('capPlaceSp').oninput = e => { state.layout.cap.placeSpace = +e.target.value; $('capPlaceSpV').textContent = e.target.value; requestRender(); };

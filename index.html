@@ -266,6 +266,8 @@
           <div class="adj"><label>ズーム</label><input type="range" id="zoomR" min="100" max="400" step="1" value="100"><span class="val" id="zoomV">100</span></div>
         </div>
         <div id="capOpts">
+          <div class="colorLbl">テンプレート</div>
+          <div class="chips" id="tplChips"></div>
           <div class="colorLbl">上の小さい文字</div>
           <input type="text" id="capTop" maxlength="30" class="capIn">
           <div class="colorLbl">地名（大きい文字）</div>
@@ -356,7 +358,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 3.0';
+const APP_VERSION = 'ver 3.1';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -398,7 +400,14 @@ const BUILTIN_PRESETS = [
 const STORE_KEY = 'colorstudio.customPresets.v1';
 // 「POSTCARDS FROM / PARIS」タイトルの初期設定
 const CAP_DEFAULT = { top: 'POSTCARDS FROM', place: 'PARIS', font: 'didone', color: '#ffffff', size: 11, y: 0.5, shadow: 0.35,
-                      topWeight: 600, topSpace: 22, placeSpace: 7 };
+                      topWeight: 600, topSpace: 22, placeSpace: 7, topFont: 'didone', topRatio: 0.34, tpl: 'postcards' };
+// タイトルのテンプレート（地名は入れたものを引き継いで、大文字／頭だけ大文字に整える）
+const TITLE_TEMPLATES = [
+  { id: 'postcards', name: '✉ Postcards from', caseFn: s => s.toUpperCase(),
+    cap: { top: 'POSTCARDS FROM', font: 'didone', topFont: 'didone', topWeight: 600, topSpace: 22, placeSpace: 7, topRatio: 0.34, size: 11 } },
+  { id: 'love', name: '♡ A love letter to', caseFn: s => s.toLowerCase().replace(/(^|[\s-])\S/g, m => m.toUpperCase()),
+    cap: { top: 'a love letter to', font: 'didone', topFont: 'serif', topWeight: 500, topSpace: 0, placeSpace: 3, topRatio: 0.4, size: 13 } },
+];
 
 /* フィルムカメラ風エフェクト */
 /* 文字のフォント（シンプル × レトロ） */
@@ -992,7 +1001,7 @@ function drawOptical(g, text, cx, y, gap) {
 
 function drawPostcardTitle(g, W, H) {
   const c = { ...CAP_DEFAULT, ...state.layout.cap };
-  const big = W * c.size / 100, small = big * 0.34;
+  const big = W * c.size / 100, small = big * (c.topRatio || 0.34);
   const cy = H * c.y;
   g.save();
   g.fillStyle = c.color;
@@ -1003,8 +1012,10 @@ function drawPostcardTitle(g, W, H) {
   const total = (top ? small : 0) + gap + (place ? big * 0.8 : 0);
   let y = cy - total / 2;
   if (top) {
-    g.font = fontString({ font: c.font, weight: c.topWeight }, small);
-    drawOptical(g, top, W / 2, y + small / 2, small * c.topSpace / 100 + small * 0.08);
+    g.font = fontString({ font: c.topFont || c.font, weight: c.topWeight }, small);
+    // 字間0のとき（筆記体っぽい斜体など）はフォント本来の並びのまま
+    if (c.topSpace > 0) drawOptical(g, top, W / 2, y + small / 2, small * c.topSpace / 100 + small * 0.08);
+    else drawSpaced(g, top, W / 2, y + small / 2, 0);
     y += small + gap;
   }
   if (place) {
@@ -1477,7 +1488,7 @@ function setLayout(patch) {
   refreshLayoutUI(); requestRender();
   if (on) {
     const c = { ...CAP_DEFAULT, ...state.layout.cap };
-    Promise.all([document.fonts?.load(fontString({ font: c.font }, 40), c.place || 'A'), document.fonts?.load(fontString({ font: c.font, weight: c.topWeight }, 40), c.top || 'A')])
+    Promise.all([document.fonts?.load(fontString({ font: c.font }, 40), c.place || 'A'), document.fonts?.load(fontString({ font: c.topFont || c.font, weight: c.topWeight }, 40), c.top || 'A')])
       .then(() => requestRender()).catch(() => {});
   }
 }
@@ -1489,7 +1500,7 @@ function refreshLayoutUI() {
   const st = $('styleChips'); st.innerHTML = '';
   st.appendChild(chip('背景＋余白', L.style === 'simple', () => setLayout({ style: 'simple' })));
   st.appendChild(chip('写真いっぱい', L.style === 'fill', () => setLayout({ style: 'fill' })));
-  st.appendChild(chip('✉ Postcards from', L.style === 'postcard', () => setLayout({ style: 'postcard' })));
+  st.appendChild(chip('✉ タイトル入り', L.style === 'postcard', () => setLayout({ style: 'postcard' })));
   $('bgOpts').style.display = L.style === 'simple' ? '' : 'none';
   $('panOpts').style.display = L.style === 'simple' ? 'none' : '';
   const zm = Math.round((L.zoom || 1) * 100); $('zoomR').value = zm; $('zoomV').textContent = zm;
@@ -1506,6 +1517,8 @@ function refreshLayoutUI() {
   const cw = $('capWeights'); cw.innerHTML = '';
   for (const [nm, wt] of [['細め', 400], ['ふつう', 500], ['太め', 600], ['もっと太く', 700]])
     cw.appendChild(chip(nm, L.cap.topWeight === wt, () => { L.cap.topWeight = wt; setLayout({}); }));
+  const tc = $('tplChips'); tc.innerHTML = '';
+  for (const t of TITLE_TEMPLATES) tc.appendChild(chip(t.name, (L.cap.tpl || 'postcards') === t.id, () => applyTitleTemplate(t)));
   const cf = $('capFonts'); cf.innerHTML = '';
   for (const f of FONTS) {
     const b = chip(f.name, f.id === L.cap.font, () => { L.cap.font = f.id; setLayout({}); }, 'fontChip');
@@ -1518,6 +1531,11 @@ function refreshLayoutUI() {
     const [W, H] = layoutSize();
     $('sizeNote').textContent = `出来上がり：${W}×${H}px（インスタにそのまま投稿できるサイズ）`;
   }
+}
+function applyTitleTemplate(t) {
+  const c = state.layout.cap;
+  Object.assign(c, t.cap, { tpl: t.id, place: t.caseFn(c.place || 'Paris') });
+  setLayout({});
 }
 function buildLayoutUI() {
   $('padR').oninput = e => { state.layout.pad = e.target.value / 100; $('padV').textContent = e.target.value; requestRender(); };

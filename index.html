@@ -14,7 +14,7 @@
 <title>R's Little Film</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=BIZ+UDGothic&family=Shippori+Mincho:wght@400;500&family=Klee+One&family=Zen+Kaku+Gothic+New:wght@400;500&family=Cormorant+Garamond:ital,wght@1,400;1,500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=BIZ+UDGothic&family=Shippori+Mincho:wght@400;500&family=Klee+One&family=Zen+Kaku+Gothic+New:wght@400;500&family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400;1,500&family=Arimo:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #111; --panel: #1a1a1a; --line: #2a2a2a; --text: #eee; --sub: #888; --accent: #f2f2f2;
@@ -86,6 +86,10 @@
   .fontChip { font-size: 15px; }
   .colorDot { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%; border: 2px solid #444; }
   .colorDot.on { border-color: #fff; box-shadow: 0 0 0 2px #111 inset; }
+  .pickWrap { position: relative; flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%;
+              background: conic-gradient(#f66, #fd6, #6d8, #6cf, #a7f, #f6c, #f66); border: 2px solid #444; overflow: hidden; }
+  .pickWrap.on { border-color: #fff; }
+  .pickWrap input { position: absolute; inset: -8px; width: 44px; height: 44px; opacity: 0; cursor: pointer; border: 0; padding: 0; }
   .textHint { font-size: 11px; color: var(--sub); margin: 6px 0 2px; }
   #delText { font-size: 12px; color: #e66; padding: 6px 0; }
   #textEditor[hidden] { display: none; }
@@ -185,10 +189,11 @@
         <textarea id="textInput" rows="2" placeholder="Little joy"></textarea>
         <div class="chips" id="fontChips" style="padding-top:10px"></div>
         <div class="adj"><label>大きさ</label><input type="range" id="textSize" min="2" max="20" step="0.5" value="6"><span class="val" id="textSizeVal">6</span></div>
+        <div class="adj"><label>字間</label><input type="range" id="textSpace" min="0" max="40" step="1" value="0"><span class="val" id="textSpaceVal">0</span></div>
         <div class="adj"><label>濃さ</label><input type="range" id="textAlpha" min="20" max="100" step="1" value="100"><span class="val" id="textAlphaVal">100</span></div>
         <div class="chips" id="colorChips"></div>
         <div style="display:flex;justify-content:space-between;align-items:center">
-          <p class="textHint">写真の上をなぞると文字が動くよ</p>
+          <p class="textHint">文字をつかんでドラッグすると動くよ</p>
           <button id="delText">この文字を削除</button>
         </div>
       </div>
@@ -237,7 +242,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 1.8';
+const APP_VERSION = 'ver 1.9';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -284,6 +289,9 @@ const FONTS = [
   { id: 'type',   name: 'タイプ',   css: '"Courier Prime", "BIZ UDGothic", monospace' },
   { id: 'mincho', name: '明朝',     css: '"Shippori Mincho", serif' },
   { id: 'serif',  name: 'Serif',    css: '"Cormorant Garamond", "Shippori Mincho", serif', style: 'italic', weight: 500 },
+  // デジタルトラベルダイアリー（Through My Eyes）と同じフォント
+  { id: 'diary',  name: 'Diary',    css: '"Arimo", "Zen Kaku Gothic New", sans-serif' },
+  { id: 'diaryS', name: 'Diary Serif', css: '"Cormorant Garamond", "Shippori Mincho", serif' },
   { id: 'gothic', name: 'ゴシック', css: '"Zen Kaku Gothic New", sans-serif' },
   { id: 'hand',   name: '手書き',   css: '"Klee One", cursive' },
 ];
@@ -617,9 +625,30 @@ function drawText(g, t, w, h) {
   g.globalAlpha = t.alpha;
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  const lines = t.text.split('\n'), lh = px * 1.35;
-  lines.forEach((ln, i) => g.fillText(ln, t.x * w, t.y * h + (i - (lines.length - 1) / 2) * lh));
+  const lines = t.text.split('\n'), lh = px * 1.35, sp = px * (t.space || 0) / 100;
+  lines.forEach((ln, i) => drawSpaced(g, ln, t.x * w, t.y * h + (i - (lines.length - 1) / 2) * lh, sp));
   g.restore();
+}
+// 字間つきで中央揃えに描く（1文字ずつ）
+function lineWidth(g, ln, sp) {
+  const chars = [...ln];
+  return chars.reduce((a, c) => a + g.measureText(c).width, 0) + sp * Math.max(0, chars.length - 1);
+}
+function drawSpaced(g, ln, cx, y, sp) {
+  if (!sp) { g.textAlign = 'center'; g.fillText(ln, cx, y); return; }
+  g.textAlign = 'left';
+  let x = cx - lineWidth(g, ln, sp) / 2;
+  for (const c of ln) { g.fillText(c, x, y); x += g.measureText(c).width + sp; }
+}
+// 文字の範囲（0〜1の比率）
+const measureCtx = document.createElement('canvas').getContext('2d');
+function textBox(t) {
+  const W = 1000, H = 1000 * (state.h / state.w || 1);
+  const px = Math.min(W, H) * t.size / 100, sp = px * (t.space || 0) / 100;
+  measureCtx.font = fontString(t, px);
+  const lines = t.text.split('\n');
+  const bw = Math.max(...lines.map(l => lineWidth(measureCtx, l, sp)), px);
+  return { w: bw / W, h: lines.length * px * 1.35 / H };
 }
 
 function drawDateStamp(g, w, h) {
@@ -973,6 +1002,13 @@ function buildTextUI() {
     b.onclick = () => updateText({ color: c });
     cc.appendChild(b);
   }
+  // 好きな色を選べるカラーピッカー
+  const pw = document.createElement('label');
+  pw.className = 'pickWrap'; pw.id = 'pickWrap';
+  pw.innerHTML = '<input type="color" id="colorPick" value="#c9a27e">';
+  cc.appendChild(pw);
+  $('colorPick').oninput = e => updateText({ color: e.target.value });
+  $('textSpace').oninput = e => { $('textSpaceVal').textContent = e.target.value; updateText({ space: +e.target.value }); };
   $('textInput').oninput = e => updateText({ text: e.target.value });
   $('textSize').oninput = e => { $('textSizeVal').textContent = e.target.value; updateText({ size: +e.target.value }); };
   $('textAlpha').oninput = e => { $('textAlphaVal').textContent = e.target.value; updateText({ alpha: e.target.value / 100 }); };
@@ -1025,7 +1061,12 @@ function refreshTextUI(keepInput) {
   $('textSize').value = t.size; $('textSizeVal').textContent = t.size;
   $('textAlpha').value = Math.round(t.alpha * 100); $('textAlphaVal').textContent = Math.round(t.alpha * 100);
   for (const b of $('fontChips').children) b.classList.toggle('on', b.dataset.id === t.font);
-  for (const b of $('colorChips').children) b.classList.toggle('on', b.dataset.c === t.color);
+  for (const b of $('colorChips').querySelectorAll('.colorDot')) b.classList.toggle('on', b.dataset.c === t.color);
+  const custom = !TEXT_COLORS.includes(t.color);
+  $('pickWrap').classList.toggle('on', custom);
+  $('pickWrap').style.boxShadow = custom ? `inset 0 0 0 5px ${t.color}` : '';
+  if (custom) $('colorPick').value = t.color;
+  $('textSpace').value = t.space || 0; $('textSpaceVal').textContent = t.space || 0;
 }
 
 /* =========================================================
@@ -1037,26 +1078,31 @@ function pointerPos(e) {
   const b = view.getBoundingClientRect();
   return [Math.min(1, Math.max(0, (e.clientX - b.left) / b.width)), Math.min(1, Math.max(0, (e.clientY - b.top) / b.height))];
 }
+let dragOff = [0, 0];
 view.addEventListener('pointerdown', e => {
   if (state.tab === 'text' && state.texts.length) {
-    // 近くの文字を選んで、そのままドラッグ
+    // 触ったところにある文字をつかむ（つかんだ位置のまま動く＝ジャンプしない）
     const [x, y] = pointerPos(e);
-    let best = -1, bd = 0.15;
-    state.texts.forEach((t, i) => { const d = Math.hypot(t.x - x, t.y - y); if (d < bd) { bd = d; best = i; } });
-    if (best >= 0) selectText(best);
-    if (state.selText >= 0) {
-      dragging = true; view.setPointerCapture(e.pointerId);
-      moveText(x, y);
-    }
+    let best = -1, bestArea = Infinity;
+    state.texts.forEach((t, i) => {
+      const b = textBox(t), m = 0.04;
+      if (Math.abs(x - t.x) < b.w / 2 + m && Math.abs(y - t.y) < b.h / 2 + m && b.w * b.h < bestArea) { best = i; bestArea = b.w * b.h; }
+    });
+    if (best < 0) return;
+    selectText(best);
+    const t = state.texts[best];
+    dragOff = [t.x - x, t.y - y];
+    dragging = true;
+    view.setPointerCapture(e.pointerId);
     return;
   }
   showOrig(true);
 });
-view.addEventListener('pointermove', e => { if (dragging) moveText(...pointerPos(e)); });
+view.addEventListener('pointermove', e => { if (dragging) { const [x, y] = pointerPos(e); moveText(x + dragOff[0], y + dragOff[1]); } });
 for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) view.addEventListener(ev, () => { dragging = false; showOrig(false); });
 function moveText(x, y) {
   const t = state.texts[state.selText]; if (!t) return;
-  t.x = x; t.y = y; requestRender();
+  t.x = Math.min(1, Math.max(0, x)); t.y = Math.min(1, Math.max(0, y)); requestRender();
 }
 view.addEventListener('contextmenu', e => e.preventDefault());
 

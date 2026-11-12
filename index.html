@@ -29,10 +29,14 @@
   #app { display: flex; flex-direction: column; height: 100%; max-width: 900px; margin: 0 auto; }
 
   header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; padding-top: max(12px, env(safe-area-inset-top)); }
-  .logo { font-weight: 700; letter-spacing: .25em; font-size: 13px; }
+  .logo { font-weight: 700; letter-spacing: .2em; font-size: 12px; white-space: nowrap; }
   .hbtn { font-size: 14px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); }
   .hbtn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
   .hbtn:disabled { opacity: .3; }
+  .hgroup { display: flex; gap: 6px; align-items: center; }
+  .hbtn.icon { padding: 6px 10px; font-size: 15px; line-height: 1; }
+  .guide { position: absolute; display: none; pointer-events: none; background: #E0457B; z-index: 4; }
+  #guideV { width: 2px; margin-left: -1px; } #guideH { height: 2px; margin-top: -1px; }
 
   #stage { flex: 1; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; padding: 8px 16px; }
   #view { max-width: 100%; max-height: 100%; display: none; touch-action: none; user-select: none; -webkit-user-select: none;
@@ -196,7 +200,11 @@
 <body>
 <div id="app">
   <header>
-    <button class="hbtn" id="openBtn">開く</button>
+    <div class="hgroup">
+      <button class="hbtn" id="openBtn">開く</button>
+      <button class="hbtn icon" id="undoBtn" title="ひとつ前に戻る" disabled>↶</button>
+      <button class="hbtn icon" id="redoBtn" title="やり直し" disabled>↷</button>
+    </div>
     <div class="logo">R'S LITTLE FILM</div>
     <button class="hbtn primary" id="exportBtn" disabled>保存</button>
   </header>
@@ -214,6 +222,8 @@
     <div id="loupe"></div>
     <div id="origBadge">オリジナル</div>
     <div id="grid"></div>
+    <div class="guide" id="guideV"></div>
+    <div class="guide" id="guideH"></div>
   </div>
 
   <div id="batchBar">
@@ -308,6 +318,8 @@
           <div class="adj"><label>字間（上）</label><input type="range" id="capTopSp" min="0" max="60" step="1" value="22"><span class="val" id="capTopSpV">22</span></div>
           <div class="adj"><label>字間（地名）</label><input type="range" id="capPlaceSp" min="0" max="40" step="1" value="7"><span class="val" id="capPlaceSpV">7</span></div>
           <div class="adj"><label>文字の高さ</label><input type="range" id="capY" min="10" max="90" step="1" value="50"><span class="val" id="capYV">50</span></div>
+          <div class="adj"><label>行間</label><input type="range" id="capGap" min="-100" max="250" step="1" value="100"><span class="val" id="capGapV">100</span></div>
+          <div class="adj"><label>透明度</label><input type="range" id="capAlpha" min="0" max="90" step="1" value="0"><span class="val" id="capAlphaV">0</span></div>
           <div class="adj"><label>影</label><input type="range" id="capShadow" min="0" max="100" step="1" value="35"><span class="val" id="capShadowV">35</span></div>
           <div class="chips" id="capColors"></div>
         </div>
@@ -327,7 +339,7 @@
         <div class="adj"><label>大きさ</label><input type="range" id="textSize" min="2" max="20" step="0.5" value="6"><span class="val" id="textSizeVal">6</span></div>
         <div class="adj"><label>字間</label><input type="range" id="textSpace" min="0" max="40" step="1" value="0"><span class="val" id="textSpaceVal">0</span></div>
         <div class="adj"><label>影</label><input type="range" id="textShadow" min="0" max="100" step="1" value="0"><span class="val" id="textShadowVal">0</span></div>
-        <div class="adj"><label>濃さ</label><input type="range" id="textAlpha" min="20" max="100" step="1" value="100"><span class="val" id="textAlphaVal">100</span></div>
+        <div class="adj"><label>透明度</label><input type="range" id="textAlpha" min="0" max="90" step="1" value="0"><span class="val" id="textAlphaVal">0</span></div>
         <div class="colorLbl">色</div>
         <div class="chips" id="colorChips"></div>
         <div id="picker">
@@ -388,7 +400,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 4.0';
+const APP_VERSION = 'ver 4.1';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -913,7 +925,57 @@ function fitSize(w, h, maxEdge) {
    ========================================================= */
 let needsRender = false;
 let editVersion = 0;
-function requestRender() { needsRender = true; editVersion++; schedulePrepare(); }
+function requestRender() { needsRender = true; editVersion++; schedulePrepare(); scheduleHistory(); }
+
+/* =========================================================
+   戻る／やり直し（操作が止まったところで今の状態を覚えておく）
+   ========================================================= */
+const hist = { stack: [], pos: -1, timer: null, restoring: false };
+function snapshot() {
+  return JSON.stringify({ presetId: state.presetId, strength: state.strength, adj: state.adj, film: state.film,
+                          texts: state.texts, geo: state.geo, layout: state.layout });
+}
+function scheduleHistory() {
+  if (hist.restoring || !state.src) return;
+  clearTimeout(hist.timer);
+  hist.timer = setTimeout(pushHistory, 450);
+}
+function pushHistory() {
+  const s = snapshot();
+  if (hist.stack[hist.pos] === s) return;
+  hist.stack = hist.stack.slice(0, hist.pos + 1);
+  hist.stack.push(s);
+  if (hist.stack.length > 60) hist.stack.shift();
+  hist.pos = hist.stack.length - 1;
+  updateHistoryButtons();
+}
+function resetHistory() { hist.stack = []; hist.pos = -1; clearTimeout(hist.timer); setTimeout(pushHistory, 800); updateHistoryButtons(); }
+function updateHistoryButtons() {
+  $('undoBtn').disabled = hist.pos <= 0;
+  $('redoBtn').disabled = hist.pos >= hist.stack.length - 1;
+}
+function restoreSnapshot(json) {
+  const s = JSON.parse(json);
+  hist.restoring = true;
+  try {
+    selectPreset(allPresets().some(p => p.id === s.presetId) ? s.presetId : 'OR');
+    state.strength = s.strength; updateStrengthUI();
+    for (const r of $('adjList').children) r._set(Math.round((s.adj[r._key] || 0) * 100));
+    for (const r of $('filmList').children) r._set(Math.round((s.film[r._key] || 0) * 100), true);
+    state.film.leakPos = s.film.leakPos || 0;
+    for (const x of $('leakPos').children) x.classList.toggle('on', +x.dataset.v === state.film.leakPos);
+    setStamp(!!s.film.stamp);
+    state.film.date = s.film.date; $('stampDate').value = s.film.date || '';
+    Object.assign(state.geo, s.geo);
+    for (const r of $('geoList').children) r._set(r._key === 'angle' ? s.geo.angle : Math.round((s.geo[r._key] || 0) * 100));
+    Object.assign(state.geo, { px: s.geo.px, py: s.geo.py }); setGeoZoom(s.geo.zoom || 1);
+    state.texts = s.texts; state.selText = Math.min(state.selText, state.texts.length - 1); state.texts.forEach(loadFont); refreshTextUI();
+    state.layout = s.layout; setLayout({});
+    requestRender();
+  } finally { setTimeout(() => { hist.restoring = false; }, 0); }
+}
+function undo() { clearTimeout(hist.timer); pushHistory(); if (hist.pos <= 0) return; hist.pos--; restoreSnapshot(hist.stack[hist.pos]); updateHistoryButtons(); }
+function redo() { if (hist.pos >= hist.stack.length - 1) return; hist.pos++; restoreSnapshot(hist.stack[hist.pos]); updateHistoryButtons(); }
 
 // 写真は編集が止まったら裏でフル解像度の保存用画像を作っておく（保存ボタン1回で共有シートを出すため）
 let exportR = null, prepTimer = null, ready = null;   // ready = { version, blob }
@@ -1092,10 +1154,12 @@ function drawPostcardTitle(g, W, H) {
   const cy = H * c.y;
   g.save();
   g.fillStyle = c.color;
+  g.globalAlpha = 1 - (c.trans || 0);
   g.textBaseline = 'middle';
   if (c.shadow) { g.shadowColor = `rgba(0,0,0,${0.45 * c.shadow})`; g.shadowBlur = big * 0.3 * c.shadow; g.shadowOffsetY = big * 0.03; }
   const top = c.top.trim(), place = c.place.trim();
-  const gap = top && place ? big * 0.14 + small * 0.3 : 0;
+  // 行間（100がふつう。小さくすると2行が近づく）
+  const gap = top && place ? (big * 0.14 + small * 0.3) * (c.gap ?? 100) / 100 : 0;
   const total = (top ? small : 0) + gap + (place ? big * 0.8 : 0);
   let y = cy - total / 2;
   if (top) {
@@ -1130,6 +1194,7 @@ $('openBtn').onclick = openPicker;
 $('emptyOpen').onclick = openPicker;
 
 $('file').onchange = e => {
+  resetHistory();
   const files = [...e.target.files];
   e.target.value = '';
   const f = files[0];
@@ -1803,6 +1868,8 @@ function refreshLayoutUI() {
   if (document.activeElement !== $('capTop')) $('capTop').value = L.cap.top;
   if (document.activeElement !== $('capPlace')) $('capPlace').value = L.cap.place;
   $('capY').value = Math.round(L.cap.y * 100); $('capYV').textContent = Math.round(L.cap.y * 100);
+  const cg = L.cap.gap ?? 100; $('capGap').value = cg; $('capGapV').textContent = cg;
+  const ca = Math.round((L.cap.trans || 0) * 100); $('capAlpha').value = ca; $('capAlphaV').textContent = ca;
   $('capShadow').value = Math.round(L.cap.shadow * 100); $('capShadowV').textContent = Math.round(L.cap.shadow * 100);
   const ps = Math.round((L.cap.placeScale || 1) * 100); $('capPlaceSize').value = ps; $('capPlaceSizeV').textContent = ps;
   const tr = Math.round((L.cap.topRatio || 0.34) * 100); $('capTopSize').value = tr; $('capTopSizeV').textContent = tr;
@@ -1840,6 +1907,8 @@ function buildLayoutUI() {
   $('capTopSize').oninput = e => { state.layout.cap.topRatio = e.target.value / 100; $('capTopSizeV').textContent = e.target.value; requestRender(); };
   $('capTopSp').oninput = e => { state.layout.cap.topSpace = +e.target.value; $('capTopSpV').textContent = e.target.value; requestRender(); };
   $('capPlaceSp').oninput = e => { state.layout.cap.placeSpace = +e.target.value; $('capPlaceSpV').textContent = e.target.value; requestRender(); };
+  $('capGap').oninput = e => { state.layout.cap.gap = +e.target.value; $('capGapV').textContent = e.target.value; requestRender(); };
+  $('capAlpha').oninput = e => { state.layout.cap.trans = e.target.value / 100; $('capAlphaV').textContent = e.target.value; requestRender(); };
   $('capShadow').oninput = e => { state.layout.cap.shadow = e.target.value / 100; $('capShadowV').textContent = e.target.value; requestRender(); };
   $('zoomR').oninput = e => { state.layout.zoom = e.target.value / 100; $('zoomV').textContent = e.target.value; requestRender(); };
   $('capSize').oninput = e => { state.layout.cap.size = +e.target.value; $('capSizeV').textContent = e.target.value; requestRender(); };
@@ -1912,7 +1981,7 @@ function buildTextUI() {
   $('textInput').oninput = e => updateText({ text: e.target.value });
   $('textSize').oninput = e => { $('textSizeVal').textContent = e.target.value; updateText({ size: +e.target.value }); };
   $('textShadow').oninput = e => { $('textShadowVal').textContent = e.target.value; updateText({ shadow: e.target.value / 100 }); };
-  $('textAlpha').oninput = e => { $('textAlphaVal').textContent = e.target.value; updateText({ alpha: e.target.value / 100 }); };
+  $('textAlpha').oninput = e => { $('textAlphaVal').textContent = e.target.value; updateText({ alpha: 1 - e.target.value / 100 }); };
   $('delText').onclick = () => {
     state.texts.splice(state.selText, 1);
     state.selText = state.texts.length - 1;
@@ -2010,7 +2079,7 @@ function refreshTextUI(keepInput) {
   if (!t) return;
   if (!keepInput) $('textInput').value = t.text;
   $('textSize').value = t.size; $('textSizeVal').textContent = t.size;
-  $('textAlpha').value = Math.round(t.alpha * 100); $('textAlphaVal').textContent = Math.round(t.alpha * 100);
+  const tp = Math.round((1 - t.alpha) * 100); $('textAlpha').value = tp; $('textAlphaVal').textContent = tp;
   for (const b of $('fontChips').children) b.classList.toggle('on', b.dataset.id === t.font);
   for (const b of $('colorChips').querySelectorAll('.colorDot')) b.classList.toggle('on', b.dataset.c === t.color);
   const custom = !TEXT_COLORS.includes(t.color);
@@ -2160,12 +2229,34 @@ for (const surf of [view, $('layoutView')]) {
   for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) surf.addEventListener(ev, e => {
     if (ev !== 'pointerup' && dropping) { dropping = false; $('loupe').style.display = 'none'; }
     panPts.delete(e.pointerId); if (panPts.size < 2) pinch = null;
-    dragging = false; showOrig(false);
+    dragging = false; showOrig(false); hideGuides();
   });
   surf.addEventListener('contextmenu', e => e.preventDefault());
 }
+// 写真が画面のどこに見えているか（ガイド線の位置合わせ用）
+function photoClientRect() {
+  if (layoutOn() && state.layoutRect) {
+    const b = $('layoutView').getBoundingClientRect(), k = b.width / $('layoutView').width, q = state.layoutRect;
+    return { left: b.left + q.x * k, top: b.top + q.y * k, width: q.w * k, height: q.h * k };
+  }
+  return view.getBoundingClientRect();
+}
+function showGuides(v, h) {
+  const r = photoClientRect(), sr = $('stage').getBoundingClientRect();
+  const gv = $('guideV'), gh = $('guideH');
+  gv.style.display = v ? 'block' : 'none'; gh.style.display = h ? 'block' : 'none';
+  if (v) Object.assign(gv.style, { left: (r.left - sr.left + r.width / 2) + 'px', top: (r.top - sr.top) + 'px', height: r.height + 'px' });
+  if (h) Object.assign(gh.style, { top: (r.top - sr.top + r.height / 2) + 'px', left: (r.left - sr.left) + 'px', width: r.width + 'px' });
+}
+function hideGuides() { showGuides(false, false); }
+
 function moveText(x, y) {
   const t = state.texts[state.selText]; if (!t) return;
+  // 真ん中に近づいたら吸いついて、ピンクのガイド線を出す（Canvaみたいに）
+  const SNAP = 0.015;
+  const snapV = Math.abs(x - 0.5) < SNAP, snapH = Math.abs(y - 0.5) < SNAP;
+  if (snapV) x = 0.5; if (snapH) y = 0.5;
+  showGuides(snapV, snapH);
   const nx = Math.min(1, Math.max(0, x)), ny = Math.min(1, Math.max(0, y)), dx = nx - t.x, dy = ny - t.y;
   // セットの文字（POSTCARDS FROM と地名）は一緒に動く
   for (const o of state.texts) if (o === t || (t.group && o.group === t.group)) { o.x = Math.min(1, Math.max(0, o.x + dx)); o.y = Math.min(1, Math.max(0, o.y + dy)); }
@@ -2382,6 +2473,8 @@ buildAdjust();
 buildFilm();
 buildTextUI();
 buildFavList();
+$('undoBtn').onclick = undo;
+$('redoBtn').onclick = redo;
 buildGeo();
 buildLayoutUI();
 document.querySelectorAll('input[type=range]').forEach(enhanceRange);

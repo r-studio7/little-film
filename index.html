@@ -400,7 +400,7 @@
 
 <script>
 'use strict';
-const APP_VERSION = 'ver 4.1';
+const APP_VERSION = 'ver 4.2';
 document.querySelectorAll('.ver').forEach(el => el.textContent = APP_VERSION);
 
 /* =========================================================
@@ -2327,8 +2327,150 @@ function pickMime() {
   return list.find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
 }
 
+/* =========================================================
+   動画の書き出し（なめらか・高画質版）
+   1コマずつ取り出して加工 → そのまま動画に組み立てる（WebCodecs）。
+   再生しながら録画しないので、コマ落ち（カクつき）や画質の乱れが出ない。
+   使えないブラウザでは、これまでの「再生しながら録画」にもどる。
+   ========================================================= */
+function loadMuxer() {
+  if (window.Mp4Muxer) return Promise.resolve();
+  return new Promise((res, rej) => {
+    const sc = document.createElement('script');
+    sc.src = 'vendor/mp4-muxer.js'; sc.onload = res; sc.onerror = rej;
+    document.head.appendChild(sc);
+  });
+}
+async function pickVideoConfig(w, h, fps) {
+  if (!window.VideoEncoder) return null;
+  const bitrate = Math.round(Math.min(40e6, Math.max(8e6, w * h * fps * 0.35)));   // 1080p30で約22Mbps（粒子があっても荒れにくい）
+  const list = [['avc', 'avc1.640034'], ['avc', 'avc1.640028'], ['avc', 'avc1.4d0028'], ['hevc', 'hvc1.1.6.L123.B0'], ['vp9', 'vp09.00.40.08']];
+  for (const [mux, codec] of list) {
+    const cfg = { codec, width: w, height: h, bitrate, framerate: fps, latencyMode: 'quality', bitrateMode: 'variable' };
+    if (mux === 'avc') cfg.avc = { format: 'avc' };
+    try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return { mux, cfg }; } catch {}
+  }
+  return null;
+}
+async function decodeAudio(v) {
+  try {
+    const buf = await (await fetch(v.src)).arrayBuffer();
+    const Ctx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    return await new Ctx(2, 1, 48000).decodeAudioData(buf);
+  } catch { return null; }   // 音のない動画
+}
+async function pickAudioConfig(ab) {
+  if (!ab || !window.AudioEncoder) return null;
+  const base = { sampleRate: ab.sampleRate, numberOfChannels: Math.min(2, ab.numberOfChannels), bitrate: 192000 };
+  for (const [mux, codec] of [['aac', 'mp4a.40.2'], ['opus', 'opus']]) {
+    const cfg = { ...base, codec };
+    if (mux === 'opus' && ![8000, 12000, 16000, 24000, 48000].includes(cfg.sampleRate)) continue;
+    try { if ((await AudioEncoder.isConfigSupported(cfg)).supported) return { cfg, mux }; } catch {}
+  }
+  return null;
+}
+const seekTo = (v, t) => new Promise(res => {
+  const done = () => { v.removeEventListener('seeked', done); res(); };
+  v.addEventListener('seeked', done);
+  v.currentTime = t;
+});
+
 async function exportVideo() {
   const v = state.src;
+  try {
+    if (window.VideoEncoder && window.VideoFrame) {
+      const ok = await exportVideoFrames(v);
+      if (ok) return;
+    }
+  } catch (e) {
+    console.warn('なめらか書き出しが使えなかったので、録画方式にするよ', e);
+    state.exporting = false;
+    $('progressModal').classList.remove('show');
+  }
+  return exportVideoRealtime(v);
+}
+
+async function exportVideoFrames(v) {
+  const fps = 30;
+  let [w, h] = exportSize(); w -= w % 2; h -= h % 2;
+  const recCanvasSize = layoutOn() ? layoutSize() : [w, h];
+  const [ow, oh] = [recCanvasSize[0] - recCanvasSize[0] % 2, recCanvasSize[1] - recCanvasSize[1] % 2];
+  const vc = await pickVideoConfig(ow, oh, fps);
+  if (!vc) return false;
+  const ab = await decodeAudio(v);
+  const ac = await pickAudioConfig(ab);
+  if (ab && !ac) return false;          // 音を入れられないときは録画方式で（音を消さないため）
+  await loadMuxer();
+
+  state.exporting = true; cancelled = false;
+  v.pause(); v.loop = false;
+  const keepSeeked = v.onseeked; v.onseeked = null;   // 1コマずつ移動するので、サムネ更新は止めておく
+  $('progressTitle').textContent = '動画を書き出し中…';
+  $('progressDesc').textContent = '1コマずつ色を焼き込んでるよ。動画の長さより少し時間がかかるけど、なめらかに仕上がるよ';
+  $('progressBar').style.width = '0%'; $('progressTxt').textContent = '0%';
+  $('progressModal').classList.add('show');
+
+  const { Muxer, ArrayBufferTarget } = Mp4Muxer;
+  const target = new ArrayBufferTarget();
+  const muxer = new Muxer({
+    target, fastStart: 'in-memory', firstTimestampBehavior: 'offset',
+    video: { codec: vc.mux, width: ow, height: oh, frameRate: fps },
+    ...(ac ? { audio: { codec: ac.mux, numberOfChannels: ac.cfg.numberOfChannels, sampleRate: ac.cfg.sampleRate } } : {}),
+  });
+  let encErr = null;
+  const venc = new VideoEncoder({ output: (c, m) => muxer.addVideoChunk(c, m), error: e => { encErr = e; } });
+  venc.configure(vc.cfg);
+
+  const total = Math.max(1, Math.floor((v.duration || 0) * fps));
+  const recCanvas = layoutOn() ? $('layoutView') : view;
+  try {
+    for (let i = 0; i < total && !cancelled; i++) {
+      if (encErr) throw encErr;
+      await seekTo(v, Math.min(v.duration - 0.001, (i + 0.5) / fps));
+      main.upload(v);
+      renderMain(w, h, { time: (i * 0.618) % 1, anim: v.currentTime + 0.001, seed: Math.floor(i / 2.5) });
+      if (layoutOn()) { const lv = $('layoutView'); if (lv.width !== ow || lv.height !== oh) { lv.width = ow; lv.height = oh; } state.layoutRect = composeLayout(lv.getContext('2d'), view, ow, oh); }
+      const frame = new VideoFrame(recCanvas, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
+      venc.encode(frame, { keyFrame: i % (fps * 2) === 0 });
+      frame.close();
+      while (venc.encodeQueueSize > 3) await new Promise(r => setTimeout(r, 5));
+      if (i % 3 === 0) { const pct = Math.round(i / total * (ac ? 95 : 100)); $('progressBar').style.width = pct + '%'; $('progressTxt').textContent = pct + '%'; }
+    }
+    await venc.flush();
+    if (encErr) throw encErr;
+
+    if (ac && !cancelled) {
+      let aErr = null;
+      const aenc = new AudioEncoder({ output: (c, m) => muxer.addAudioChunk(c, m), error: e => { aErr = e; } });
+      aenc.configure(ac.cfg);
+      const ch = ac.cfg.numberOfChannels, sr = ab.sampleRate, len = Math.min(ab.length, Math.round(total / fps * sr)), step = 4096;
+      const chans = [...Array(ch)].map((_, k) => ab.getChannelData(Math.min(k, ab.numberOfChannels - 1)));
+      for (let off = 0; off < len; off += step) {
+        const n = Math.min(step, len - off), data = new Float32Array(n * ch);
+        for (let k = 0; k < ch; k++) data.set(chans[k].subarray(off, off + n), k * n);
+        const ad = new AudioData({ format: 'f32-planar', sampleRate: sr, numberOfFrames: n, numberOfChannels: ch, timestamp: Math.round(off * 1e6 / sr), data });
+        aenc.encode(ad); ad.close();
+      }
+      await aenc.flush();
+      if (aErr) throw aErr;
+    }
+    if (cancelled) return true;
+    muxer.finalize();
+  } finally {
+    try { venc.close(); } catch {}
+    v.loop = true; v.muted = true;
+    v.onseeked = keepSeeked;
+    state.exporting = false;
+    $('progressModal').classList.remove('show');
+    $('playBtn').textContent = '▶';
+    v.currentTime = 0;
+    requestRender();
+  }
+  showResult(new Blob([target.buffer], { type: 'video/mp4' }), `littlefilm_${stamp()}.mp4`, 'video');
+  return true;
+}
+
+async function exportVideoRealtime(v) {
   if (!window.MediaRecorder || !view.captureStream) {
     alert('このブラウザは動画の書き出しに対応してないみたい。最新のSafari / Chromeで試してね');
     return;
@@ -2367,7 +2509,7 @@ async function exportVideo() {
   tracks.forEach(t => stream.addTrack(t));
   const mime = pickMime();
   const [ew, eh] = [recCanvas.width, recCanvas.height];
-  recorder = new MediaRecorder(stream, { mimeType: mime || undefined, videoBitsPerSecond: Math.round(ew * eh * 30 * 0.2) });
+  recorder = new MediaRecorder(stream, { mimeType: mime || undefined, videoBitsPerSecond: Math.round(Math.min(40e6, ew * eh * 30 * 0.35)) });
   const chunks = [];
   recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
 
@@ -2403,7 +2545,7 @@ $('cancelExport').onclick = () => {
   batchCancel = true;
   if (state.batch && state.type === 'image') return;
   cancelled = true;
-  state.src.pause();
+  if (state.type === 'video') state.src.pause();
   if (recorder && recorder.state !== 'inactive') recorder.stop();
 };
 
